@@ -1,0 +1,49 @@
+# Binaries
+pwplay-server
+pwplay-client
+pwplay-player
+pw-server
+pw-client
+pw-player
+play_flac
+simple_tone
+simple_playlist
+webservice
+webservice_v2
+interactive_playlist
+pwclient
+playlist_player
+playlist_interactive
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test files
+*.flac
+*.wav
+*.mp3
+test_*
