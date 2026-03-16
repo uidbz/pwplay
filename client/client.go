@@ -25,6 +25,25 @@ type Status struct {
 	Volume        float64  `json:"volume"`
 }
 
+// Metadata represents metadata information for an audio track
+type Metadata struct {
+	Title       string `json:"title"`
+	Album       string `json:"album"`
+	Artist      string `json:"artist"`
+	AlbumArtist string `json:"albumArtist"`
+	Composer    string `json:"composer"`
+	Genre       string `json:"genre"`
+	Year        int    `json:"year"`
+	Track       int    `json:"track"`
+	TrackTotal  int    `json:"trackTotal"`
+	Disc        int    `json:"disc"`
+	DiscTotal   int    `json:"discTotal"`
+	Lyrics      string `json:"lyrics"`
+	Comment     string `json:"comment"`
+	Format      string `json:"format"`
+	HasPicture  bool   `json:"hasPicture"`
+}
+
 // Client communicates with the PipeWire audio webservice.
 type Client struct {
 	baseURL    string
@@ -157,4 +176,18 @@ func (c *Client) MoveItems(from, count, dst int) error {
 // SetVolume sets the playback volume (0.0 = silent, 1.0 = default, 2.0 = max).
 func (c *Client) SetVolume(volume float64) error {
 	return c.post("/volume", map[string]float64{"volume": volume}, nil)
+}
+
+// Metadata returns metadata for the current track.
+func (c *Client) Metadata() (*Metadata, error) {
+	var m Metadata
+	if err := c.get("/metadata", &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// CoverURL returns the URL for the current track's album cover.
+func (c *Client) CoverURL() string {
+	return c.baseURL + "/cover"
 }

@@ -727,6 +727,15 @@ func (p *Player) TrackDuration() float64 {
 	return float64(dur) / float64(p.sampleRate)
 }
 
+// CurrentTrackMetadata returns metadata for the current track
+func (p *Player) CurrentTrackMetadata() (*TrackMetadata, error) {
+	file := p.CurrentFile()
+	if file == "" {
+		return nil, fmt.Errorf("no current track")
+	}
+	return ExtractMetadata(file)
+}
+
 func (p *Player) Close() {
 	close(p.stopDecode)
 	<-p.decodeDone

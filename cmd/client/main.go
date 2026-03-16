@@ -129,7 +129,7 @@ func stateString(s *client.Status) string {
 	return dim + "UNKNOWN" + reset
 }
 
-func render(s *client.Status, msg string, showPlaylist bool) {
+func render(s *client.Status, msg string, showPlaylist bool, metadata *client.Metadata) {
 	var buf strings.Builder
 
 	buf.WriteString(cursorHome)
@@ -144,11 +144,29 @@ func render(s *client.Status, msg string, showPlaylist bool) {
 	buf.WriteString(clearLine)
 	buf.WriteString("  State: " + stateString(s) + "\n")
 
-	// Current track
+	// Current track with metadata
 	buf.WriteString(clearLine)
-	buf.WriteString(fmt.Sprintf("  Track: %s[%d/%d]%s %s%s%s\n",
-		dim, s.CurrentTrack+1, s.TotalTracks, reset,
-		bold+white, s.CurrentFile, reset))
+	buf.WriteString(fmt.Sprintf("  Track: %s[%d/%d]%s ",
+		dim, s.CurrentTrack+1, s.TotalTracks, reset))
+
+	// Display metadata if available
+	if metadata != nil && metadata.Title != "" {
+		buf.WriteString(fmt.Sprintf("%s%s%s", bold+white, metadata.Title, reset))
+		if metadata.Artist != "" {
+			buf.WriteString(fmt.Sprintf(" %sby %s%s", dim, metadata.Artist, reset))
+		}
+		buf.WriteString("\n")
+		if metadata.Album != "" {
+			buf.WriteString(clearLine)
+			buf.WriteString(fmt.Sprintf("  Album: %s%s%s", dim, metadata.Album, reset))
+			if metadata.Year > 0 {
+				buf.WriteString(fmt.Sprintf(" %s(%d)%s", dim, metadata.Year, reset))
+			}
+			buf.WriteString("\n")
+		}
+	} else {
+		buf.WriteString(fmt.Sprintf("%s%s%s\n", bold+white, s.CurrentFile, reset))
+	}
 
 	// Time + progress bar + volume
 	pos := formatTime(s.Position)
@@ -312,9 +330,15 @@ func main() {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 
+	// Track metadata cache
+	var cachedMetadata *client.Metadata
+	var lastTrackIdx int = -1
+
 	// Initial render
 	if s, err := c.Status(); err == nil {
-		render(s, msg, showPlaylist)
+		cachedMetadata, _ = c.Metadata()
+		lastTrackIdx = s.CurrentTrack
+		render(s, msg, showPlaylist, cachedMetadata)
 	}
 
 	for {
@@ -443,12 +467,22 @@ func main() {
 
 			// Immediate re-render after key
 			if s, err := c.Status(); err == nil {
-				render(s, msg, showPlaylist)
+				// Refresh metadata if track changed
+				if s.CurrentTrack != lastTrackIdx {
+					cachedMetadata, _ = c.Metadata()
+					lastTrackIdx = s.CurrentTrack
+				}
+				render(s, msg, showPlaylist, cachedMetadata)
 			}
 
 		case <-ticker.C:
 			if s, err := c.Status(); err == nil {
-				render(s, msg, showPlaylist)
+				// Refresh metadata if track changed
+				if s.CurrentTrack != lastTrackIdx {
+					cachedMetadata, _ = c.Metadata()
+					lastTrackIdx = s.CurrentTrack
+				}
+				render(s, msg, showPlaylist, cachedMetadata)
 			} else {
 				msg = red + "Connection lost: " + err.Error() + reset
 			}

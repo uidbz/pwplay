@@ -212,6 +212,38 @@ func main() {
 		})
 	})
 
+	// Get metadata for the current track.
+	// GET /metadata
+	http.HandleFunc("/metadata", func(w http.ResponseWriter, r *http.Request) {
+		metadata, err := p.CurrentTrackMetadata()
+		if err != nil {
+			http.Error(w, err.Error(), 404)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(metadata)
+	})
+
+	// Get album cover for the current track.
+	// GET /cover
+	http.HandleFunc("/cover", func(w http.ResponseWriter, r *http.Request) {
+		file := p.CurrentFile()
+		if file == "" {
+			http.Error(w, "no current track", 404)
+			return
+		}
+
+		coverData, mimeType, err := player.ExtractAlbumCover(file)
+		if err != nil {
+			http.Error(w, err.Error(), 404)
+			return
+		}
+
+		w.Header().Set("Content-Type", mimeType)
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(coverData)))
+		w.Write(coverData)
+	})
+
 	log.Println("Server started on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
