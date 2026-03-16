@@ -33,13 +33,29 @@ static struct spa_hook* create_listener() {
 }
 
 // Helper to create properties (avoids variadic C function issues)
-static struct pw_properties* create_stream_properties() {
+static struct pw_properties* create_stream_properties(int passthrough, int exclusive, uint32_t sample_rate) {
     struct pw_properties *props = pw_properties_new(
         PW_KEY_MEDIA_TYPE, "Audio",
         PW_KEY_MEDIA_CATEGORY, "Playback",
         PW_KEY_MEDIA_ROLE, "Music",
         NULL
     );
+    if (passthrough) {
+        // Prevent channel remixing.
+        pw_properties_set(props, "stream.dont-remix", "true");
+        // Request the device run at the stream's native rate
+        // so PipeWire avoids resampling.
+        char rate_str[32];
+        snprintf(rate_str, sizeof(rate_str), "1/%u", sample_rate);
+        pw_properties_set(props, PW_KEY_NODE_RATE, rate_str);
+    }
+    if (exclusive) {
+        // Request exclusive access to the sink device.
+        // Other streams will be disconnected while this stream is active.
+        // NOTE: may cause silence if the session manager cannot grant
+        // exclusive access (e.g. another app holds the device).
+        pw_properties_set(props, PW_KEY_NODE_EXCLUSIVE, "true");
+    }
     return props;
 }
 
@@ -115,8 +131,28 @@ type AudioFormat struct {
 	Channels   int
 }
 
-// NewStream creates a new PipeWire stream for audio playback
+// StreamOptions configures optional stream behavior.
+type StreamOptions struct {
+	// Passthrough disables PipeWire channel remixing and requests the
+	// device run at the stream's native sample rate. Software volume
+	// control should be disabled by the caller. This is the recommended
+	// mode for high-quality audio output.
+	Passthrough bool
+	// Exclusive requests sole access to the audio sink device. Other
+	// streams are disconnected while this stream is active. This
+	// prevents mixing with other applications but may cause silence
+	// if the session manager cannot grant exclusive access.
+	Exclusive bool
+}
+
+// NewStream creates a new PipeWire stream for audio playback.
+// Deprecated: Use NewStreamWithOptions for passthrough support.
 func NewStream(name string, format AudioFormat, callback ProcessCallback) (*Stream, error) {
+	return NewStreamWithOptions(name, format, callback, StreamOptions{})
+}
+
+// NewStreamWithOptions creates a new PipeWire stream with the given options.
+func NewStreamWithOptions(name string, format AudioFormat, callback ProcessCallback, opts StreamOptions) (*Stream, error) {
 	if callback == nil {
 		return nil, errors.New("callback cannot be nil")
 	}
@@ -136,7 +172,15 @@ func NewStream(name string, format AudioFormat, callback ProcessCallback) (*Stre
 	}
 
 	// Create stream
-	props := C.create_stream_properties()
+	passthrough := C.int(0)
+	if opts.Passthrough {
+		passthrough = 1
+	}
+	exclusive := C.int(0)
+	if opts.Exclusive {
+		exclusive = 1
+	}
+	props := C.create_stream_properties(passthrough, exclusive, C.uint32_t(format.SampleRate))
 
 	// Lock the loop before creating stream
 	C.pw_thread_loop_lock(loop)

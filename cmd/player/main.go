@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -37,14 +38,22 @@ func formatTime(seconds float64) string {
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: %s <file-or-directory> [file-or-directory] ...\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "\nSupported formats: FLAC, MP3, WAV, OGG\n")
-		fmt.Fprintf(os.Stderr, "Directories are scanned recursively for audio files.\n")
+	passthrough := flag.Bool("passthrough", false, "Disable software volume, prevent resampling and channel remixing")
+	exclusive := flag.Bool("exclusive", false, "Request exclusive access to the audio device (use with -passthrough)")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <file-or-directory> [file-or-directory] ...\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Supported formats: FLAC, MP3, WAV, OGG\n")
+		fmt.Fprintf(os.Stderr, "Directories are scanned recursively for audio files.\n\n")
+		fmt.Fprintf(os.Stderr, "Flags:\n")
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+
+	paths := flag.Args()
+	if len(paths) == 0 {
+		flag.Usage()
 		os.Exit(1)
 	}
-
-	paths := os.Args[1:]
 
 	// Expand directories into audio files
 	files, err := player.ExpandPlaylist(paths)
@@ -62,12 +71,23 @@ func main() {
 		log.Printf("  [%d] %s", i+1, filepath.Base(f))
 	}
 
-	// Create player (paused - waits for user command)
-	p, err := player.NewPlayer(files, true)
+	opts := player.PlayerOptions{
+		StartPaused: true,
+		Passthrough: *passthrough,
+		Exclusive:   *exclusive,
+	}
+	p, err := player.NewPlayerWithOptions(files, opts)
 	if err != nil {
 		log.Fatalf("Failed to create player: %v", err)
 	}
 	defer p.Close()
+
+	if *passthrough {
+		log.Println("Passthrough mode: no software volume, native sample rate, no channel remix")
+	}
+	if *exclusive {
+		log.Println("Exclusive mode: sole access to audio device")
+	}
 
 	log.Printf("Ready. Press 'space' to start playback")
 	printHelp()

@@ -7,11 +7,14 @@ REST API for controlling the pwplay audio server.
 - Play/Pause/Stop controls
 - Next/Previous track navigation
 - Seek (absolute and relative)
+- Volume control
 - Add/Remove/Move tracks dynamically
 - Directory scanning (recursive)
 - HTTP URL streaming
 - Gapless playback
 - Multi-format: FLAC, MP3, WAV, OGG
+- Passthrough mode (no resampling, no remixing, no software volume)
+- Optional exclusive device access
 
 ## Starting the Service
 
@@ -22,6 +25,23 @@ pwplay-server track1.flac track2.mp3 http://example.com/music.flac
 ```
 
 Directories are scanned recursively for supported audio files. Files are sorted alphabetically. Server starts on `http://localhost:8080` in a paused state.
+
+### Flags
+
+```
+-passthrough    Disable software volume, prevent resampling and channel remixing
+-exclusive      Request exclusive access to the audio device (use with -passthrough)
+```
+
+```bash
+# High-quality output
+pwplay-server -passthrough ~/Music/album
+
+# Audiophile mode
+pwplay-server -passthrough -exclusive ~/Music/album
+```
+
+See the [Passthrough and Exclusive Modes](README.md#passthrough-and-exclusive-modes) section in the README for details.
 
 ## API Endpoints
 
@@ -41,7 +61,8 @@ curl http://localhost:8080/status
   "totalTracks": 3,
   "playlist": ["track1.flac", "track2.flac", "track3.flac"],
   "position": 42.5,
-  "trackDuration": 180.0
+  "trackDuration": 180.0,
+  "volume": 1.0
 }
 ```
 
@@ -89,6 +110,16 @@ curl -X POST http://localhost:8080/seek \
 curl -X POST http://localhost:8080/seek \
   -H "Content-Type: application/json" \
   -d '{"relative": -10}'
+```
+
+### POST /volume
+
+Set playback volume (0.0 = silent, 1.0 = default, 2.0 = max). Ignored in passthrough mode.
+
+```bash
+curl -X POST http://localhost:8080/volume \
+  -H "Content-Type: application/json" \
+  -d '{"volume": 0.8}'
 ```
 
 ### POST /add
@@ -144,3 +175,4 @@ go build -o pwplay-server ./cmd/server
 - HTTP URLs are downloaded to a temp file before playback for reliability and seek support
 - Seek is immediate with no audible gap
 - Directories are scanned recursively for `.flac`, `.mp3`, `.wav`, `.ogg`
+- In passthrough mode, `/volume` is a no-op (gain fixed at 1.0)

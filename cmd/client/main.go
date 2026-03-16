@@ -366,7 +366,9 @@ func main() {
 				}
 			case 'v':
 				s, _ := c.Status()
-				if s != nil {
+				if s != nil && s.Passthrough {
+					msg = "Volume disabled (passthrough)"
+				} else if s != nil {
 					newVol := s.Volume - 0.05
 					if newVol < 0 {
 						newVol = 0
@@ -376,7 +378,9 @@ func main() {
 				}
 			case 'V':
 				s, _ := c.Status()
-				if s != nil {
+				if s != nil && s.Passthrough {
+					msg = "Volume disabled (passthrough)"
+				} else if s != nil {
 					newVol := s.Volume + 0.05
 					if newVol > 2 {
 						newVol = 2
@@ -386,7 +390,9 @@ func main() {
 				}
 			case 'm':
 				s, _ := c.Status()
-				if s != nil {
+				if s != nil && s.Passthrough {
+					msg = "Volume disabled (passthrough)"
+				} else if s != nil {
 					if s.Volume > 0 {
 						c.SetVolume(0)
 						msg = "Muted"

@@ -15,6 +15,7 @@ type Status struct {
 	Playing       bool     `json:"playing"`
 	Paused        bool     `json:"paused"`
 	Stopped       bool     `json:"stopped"`
+	Passthrough   bool     `json:"passthrough"`
 	CurrentTrack  int      `json:"currentTrack"`
 	CurrentFile   string   `json:"currentFile"`
 	Playlist      []string `json:"playlist"`

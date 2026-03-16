@@ -12,7 +12,8 @@ import "git.sr.ht/~uid/pwplay/client"
 c := client.New("http://localhost:8080")
 
 s, _ := c.Status()
-fmt.Printf("Track: %s [%.0fs / %.0fs]\n", s.CurrentFile, s.Position, s.TrackDuration)
+fmt.Printf("Track: %s [%.0fs / %.0fs] vol %d%%\n",
+    s.CurrentFile, s.Position, s.TrackDuration, int(s.Volume*100))
 
 c.Play()
 c.Pause()
@@ -23,6 +24,8 @@ c.Previous()
 c.Seek(120.0)        // jump to 2:00
 c.SeekRelative(10)   // forward 10 seconds
 c.SeekRelative(-30)  // backward 30 seconds
+
+c.SetVolume(0.8)     // 80% volume (ignored in passthrough mode)
 
 c.AddTracks("/path/to/song.flac")                  // single file
 c.AddTracks("/path/to/album", "http://url/song.mp3") // multiple
@@ -57,6 +60,7 @@ func (c *Client) Status() (*Status, error)
 | `TotalTracks` | `int` | Number of tracks in playlist |
 | `Position` | `float64` | Playback position in seconds |
 | `TrackDuration` | `float64` | Track duration in seconds (-1 if unknown) |
+| `Volume` | `float64` | Volume as linear gain (0.0-2.0, always 1.0 in passthrough) |
 
 ### Playback Controls
 
@@ -74,6 +78,14 @@ func (c *Client) Previous() error
 func (c *Client) Seek(position float64) error
 func (c *Client) SeekRelative(offset float64) error
 ```
+
+### Volume
+
+```go
+func (c *Client) SetVolume(volume float64) error
+```
+
+Sets volume from 0.0 (silent) to 2.0 (200%). Default is 1.0. Ignored in passthrough mode.
 
 ### Playlist Management
 
@@ -104,6 +116,8 @@ pwplay-client myhost:8080  # remote server
 | `F` / `B` | Seek forward / backward 30s |
 | `0` | Seek to start of track |
 | `1`-`9` | Seek to 10%-90% of track |
+| `v` / `V` | Volume down / up (5%) |
+| `m` | Mute / unmute |
 | `l` | Toggle playlist display |
 | `a` | Add track (prompts for path) |
 | `r` | Remove track (prompts for number) |

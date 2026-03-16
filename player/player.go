@@ -140,6 +140,10 @@ type Player struct {
 	// Volume as a linear gain factor stored atomically as uint32 (float32 bits).
 	// 0.0 = silent, 1.0 = unity gain (default), values > 1.0 = amplify.
 	volume uint32 // atomic; stores math.Float32bits(gain)
+
+	// Passthrough mode: exclusive device access, no PipeWire resampling/mixing,
+	// no software volume. Enables bit-perfect output.
+	passthrough bool
 }
 
 // ExpandPlaylist takes a list of paths (files or directories) and returns
@@ -203,7 +207,25 @@ func ExpandPlaylist(paths []string) ([]string, error) {
 	return files, nil
 }
 
+// PlayerOptions configures optional player behavior.
+type PlayerOptions struct {
+	// StartPaused starts the player in a paused state.
+	StartPaused bool
+	// Passthrough disables software volume control, prevents PipeWire
+	// channel remixing, and requests the audio device run at the
+	// stream's native sample rate.
+	Passthrough bool
+	// Exclusive requests sole access to the audio device. Other
+	// streams are disconnected while playing. May cause silence if
+	// the session manager cannot grant exclusive access.
+	Exclusive bool
+}
+
 func NewPlayer(files []string, startPaused bool) (*Player, error) {
+	return NewPlayerWithOptions(files, PlayerOptions{StartPaused: startPaused})
+}
+
+func NewPlayerWithOptions(files []string, opts PlayerOptions) (*Player, error) {
 	if len(files) == 0 {
 		return nil, fmt.Errorf("empty playlist")
 	}
@@ -225,13 +247,14 @@ func NewPlayer(files []string, startPaused bool) (*Player, error) {
 		removeTrack: make(chan int, 10),
 		stopDecode:  make(chan bool),
 		decodeDone:  make(chan bool),
+		passthrough: opts.Passthrough,
 	}
 
 	atomic.StoreInt64(&p.seekTarget, -1)
 	atomic.StoreInt64(&p.trackDuration, firstFile.Duration())
 	atomic.StoreUint32(&p.volume, math.Float32bits(1.0))
 
-	if startPaused {
+	if opts.StartPaused {
 		atomic.StoreInt32(&p.paused, 1)
 	}
 
@@ -240,7 +263,11 @@ func NewPlayer(files []string, startPaused bool) (*Player, error) {
 		Channels:   p.channels,
 	}
 
-	pwStream, err := pipewire.NewStream("Audio Player", format, p.processCallback)
+	streamOpts := pipewire.StreamOptions{
+		Passthrough: opts.Passthrough,
+		Exclusive:   opts.Exclusive,
+	}
+	pwStream, err := pipewire.NewStreamWithOptions("Audio Player", format, p.processCallback, streamOpts)
 	if err != nil {
 		firstFile.Close()
 		return nil, err
@@ -588,7 +615,11 @@ func (p *Player) MoveItems(from, count, dst int) error {
 // SetVolume sets the playback volume as a linear gain factor.
 // 0.0 = silent, 1.0 = unity gain (default). Values above 1.0 amplify.
 // The value is clamped to [0.0, 2.0].
+// In passthrough mode this is a no-op (volume is always 1.0).
 func (p *Player) SetVolume(v float64) {
+	if p.passthrough {
+		return
+	}
 	if v < 0 {
 		v = 0
 	}
@@ -601,6 +632,11 @@ func (p *Player) SetVolume(v float64) {
 // Volume returns the current volume as a linear gain factor (0.0 - 2.0).
 func (p *Player) Volume() float64 {
 	return float64(math.Float32frombits(atomic.LoadUint32(&p.volume)))
+}
+
+// IsPassthrough returns true if the player is in bit-perfect passthrough mode.
+func (p *Player) IsPassthrough() bool {
+	return p.passthrough
 }
 
 // Seek seeks to the given position in seconds within the current track.
