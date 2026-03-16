@@ -28,6 +28,33 @@ type TrackMetadata struct {
 	HasPicture  bool   `json:"hasPicture"`
 }
 
+// detectAudioFormat determines the actual audio format from file extension
+func detectAudioFormat(path string) string {
+	ext := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(strings.Split(path, "?")[0]), "."))
+
+	// Extract extension from path
+	if idx := strings.LastIndex(ext, "."); idx >= 0 {
+		ext = ext[idx+1:]
+	}
+
+	switch ext {
+	case "flac":
+		return "FLAC"
+	case "mp3":
+		return "MP3"
+	case "wav", "wave":
+		return "WAV"
+	case "ogg":
+		return "OGG"
+	case "m4a", "m4b", "m4p", "alac":
+		return "M4A"
+	case "mp4":
+		return "MP4"
+	default:
+		return strings.ToUpper(ext)
+	}
+}
+
 // ExtractMetadata extracts metadata from an audio file
 func ExtractMetadata(path string) (*TrackMetadata, error) {
 	// Handle HTTP URLs - we'd need to download first or skip
@@ -47,7 +74,8 @@ func ExtractMetadata(path string) (*TrackMetadata, error) {
 	if err != nil {
 		// If we can't read metadata, return basic info
 		return &TrackMetadata{
-			Title: path,
+			Title:  path,
+			Format: detectAudioFormat(path),
 		}, nil
 	}
 
@@ -68,7 +96,7 @@ func ExtractMetadata(path string) (*TrackMetadata, error) {
 		DiscTotal:   discTotal,
 		Lyrics:      m.Lyrics(),
 		Comment:     m.Comment(),
-		Format:      string(m.Format()),
+		Format:      detectAudioFormat(path),
 		HasPicture:  m.Picture() != nil,
 	}, nil
 }
