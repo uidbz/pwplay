@@ -736,6 +736,25 @@ func (p *Player) CurrentTrackMetadata() (*TrackMetadata, error) {
 	return ExtractMetadata(file)
 }
 
+// PlaylistMetadata returns metadata for all tracks in the playlist
+func (p *Player) PlaylistMetadata() []*TrackMetadata {
+	playlist := p.Playlist()
+	metadata := make([]*TrackMetadata, len(playlist))
+
+	for i, file := range playlist {
+		meta, err := ExtractMetadata(file)
+		if err != nil {
+			// If we can't extract metadata, create a minimal entry with the filename
+			meta = &TrackMetadata{
+				Title: file,
+			}
+		}
+		metadata[i] = meta
+	}
+
+	return metadata
+}
+
 func (p *Player) Close() {
 	close(p.stopDecode)
 	<-p.decodeDone

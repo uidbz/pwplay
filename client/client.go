@@ -187,6 +187,15 @@ func (c *Client) Metadata() (*Metadata, error) {
 	return &m, nil
 }
 
+// PlaylistMetadata returns metadata for all tracks in the playlist.
+func (c *Client) PlaylistMetadata() ([]*Metadata, error) {
+	var metadata []*Metadata
+	if err := c.get("/playlist-metadata", &metadata); err != nil {
+		return nil, err
+	}
+	return metadata, nil
+}
+
 // CoverURL returns the URL for the current track's album cover.
 func (c *Client) CoverURL() string {
 	return c.baseURL + "/cover"

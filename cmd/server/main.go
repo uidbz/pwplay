@@ -244,6 +244,14 @@ func main() {
 		w.Write(coverData)
 	})
 
+	// Get metadata for all tracks in the playlist.
+	// GET /playlist-metadata
+	http.HandleFunc("/playlist-metadata", func(w http.ResponseWriter, r *http.Request) {
+		metadata := p.PlaylistMetadata()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(metadata)
+	})
+
 	log.Println("Server started on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
