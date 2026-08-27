@@ -87,6 +87,20 @@ func main() {
 		json.NewEncoder(w).Encode(map[string]string{"status": "previous"})
 	})
 
+	// Jump to and play the track at the given queue index.
+	// POST /goto {"index": 3}
+	http.HandleFunc("/goto", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Index int `json:"index"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		p.Goto(req.Index)
+		json.NewEncoder(w).Encode(map[string]string{"status": "goto"})
+	})
+
 	// Seek to an absolute position in seconds.
 	// POST /seek {"position": 30.5}
 	// Or seek relative to current position:

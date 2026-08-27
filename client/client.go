@@ -145,6 +145,11 @@ func (c *Client) Previous() error {
 	return c.post("/previous", nil, nil)
 }
 
+// Goto jumps to and plays the track at the given queue index (0-based).
+func (c *Client) Goto(index int) error {
+	return c.post("/goto", map[string]int{"index": index}, nil)
+}
+
 // Seek seeks to an absolute position in seconds.
 func (c *Client) Seek(position float64) error {
 	return c.post("/seek", map[string]float64{"position": position}, nil)

@@ -107,6 +107,7 @@ type Player struct {
 	eof          int32
 	nextTrack    int32
 	prevTrack    int32
+	gotoTrack    int32 // atomic; -1 = no request, else the index to jump to
 	addTrack     chan string
 	removeTrack  chan int
 	stopDecode   chan bool
@@ -321,6 +322,7 @@ func NewPlayerWithOptions(files []string, opts PlayerOptions) (*Player, error) {
 	}
 
 	atomic.StoreInt64(&p.seekTarget, -1)
+	atomic.StoreInt32(&p.gotoTrack, -1)
 	atomic.StoreUint32(&p.volume, math.Float32bits(1.0))
 	// Anchor track 0 at the start of the (empty) ring's output stream.
 	p.resetBoundaries(0, 0, firstFile.Duration())
@@ -463,6 +465,18 @@ func (p *Player) decoderThread() {
 		// decoder's index. The decoder can be up to a track ahead during a
 		// gapless transition; skipping from the decoder index would jump over
 		// the track the user currently sees playing.
+		// A jump to an explicit index (double-click a queue row). Like next/prev
+		// it is honored while paused or stopped, and a successful load starts the
+		// target track playing.
+		if g := atomic.LoadInt32(&p.gotoTrack); g >= 0 {
+			atomic.StoreInt32(&p.gotoTrack, -1)
+			if p.loadTrack(int(g)) {
+				atomic.StoreInt32(&p.stopped, 0)
+				atomic.StoreInt32(&p.eof, 0)
+			}
+			continue
+		}
+
 		if atomic.LoadInt32(&p.nextTrack) == 1 {
 			atomic.StoreInt32(&p.nextTrack, 0)
 			if p.loadTrack(p.playbackTrack() + 1) {
@@ -710,6 +724,12 @@ func (p *Player) Next() {
 
 func (p *Player) Previous() {
 	atomic.StoreInt32(&p.prevTrack, 1)
+}
+
+// Goto jumps playback to the track at idx. Out-of-range requests are ignored by
+// the decoder loop (loadTrack bounds-checks the index).
+func (p *Player) Goto(idx int) {
+	atomic.StoreInt32(&p.gotoTrack, int32(idx))
 }
 
 func (p *Player) AddTrack(path string) {
