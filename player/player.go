@@ -106,6 +106,7 @@ type Player struct {
 	nextFile     AudioDecoder
 	paused       int32
 	stopped      int32
+	stopReset    int32
 	eof          int32
 	nextTrack    int32
 	prevTrack    int32
@@ -302,8 +303,35 @@ func (p *Player) decoderThread() {
 			}
 		case idx := <-p.removeTrack:
 			p.mu.Lock()
-			if idx >= 0 && idx < len(p.playlist) && idx != int(atomic.LoadInt32(&p.currentTrack)) {
+			if idx >= 0 && idx < len(p.playlist) {
+				cur := int(atomic.LoadInt32(&p.currentTrack))
 				p.playlist = append(p.playlist[:idx], p.playlist[idx+1:]...)
+				newLen := len(p.playlist)
+				switch {
+				case idx < cur:
+					// Removed a track before the current one; indices shifted
+					// down, so follow the still-playing track.
+					atomic.StoreInt32(&p.currentTrack, int32(cur-1))
+				case idx == cur:
+					// Removed the current track. Drop its decoder; the loop
+					// reloads whatever now occupies this slot (or stops if the
+					// queue is now empty). currentTrack is clamped into range.
+					if p.currentFile != nil {
+						p.currentFile.Close()
+						p.currentFile = nil
+					}
+					if p.nextFile != nil {
+						p.nextFile.Close()
+						p.nextFile = nil
+					}
+					if newLen == 0 {
+						atomic.StoreInt32(&p.currentTrack, 0)
+						atomic.StoreInt32(&p.stopped, 1)
+						atomic.StoreInt32(&p.eof, 1)
+					} else if cur >= newLen {
+						atomic.StoreInt32(&p.currentTrack, int32(newLen-1))
+					}
+				}
 			}
 			p.mu.Unlock()
 		default:
@@ -334,15 +362,39 @@ func (p *Player) decoderThread() {
 			continue
 		}
 
-		if atomic.LoadInt32(&p.stopped) == 1 || atomic.LoadInt32(&p.paused) == 1 {
-			time.Sleep(10 * time.Millisecond)
+		// Stop rewinds the current track to its start. Handled here — before
+		// the stopped/paused gate — so it takes effect even though Stop() also
+		// sets stopped=1. Position tracking is reset unconditionally so the
+		// reported position snaps to 0 whether or not a decoder is loaded (the
+		// seekTarget path did nothing when currentFile was nil, which is why
+		// Stop left the position frozen). Doing the rewind entirely inside the
+		// loop also avoids racing Stop()'s writes against the decoder.
+		if atomic.LoadInt32(&p.stopReset) == 1 {
+			atomic.StoreInt32(&p.stopReset, 0)
+			p.mu.RLock()
+			currentFile := p.currentFile
+			p.mu.RUnlock()
+			if currentFile != nil {
+				if err := currentFile.Seek(0); err != nil {
+					log.Printf("Stop rewind failed: %v", err)
+				}
+			}
+			p.ringBuffer.Clear()
+			atomic.StoreInt64(&p.seekBase, 0)
+			atomic.StoreInt64(&p.playbackSamples, 0)
+			atomic.StoreInt64(&p.decoderPos, 0)
+			atomic.StoreInt64(&p.seekTarget, -1)
 			continue
 		}
 
+		// Track navigation is honored even while paused or stopped so the user
+		// can skip around a finished or paused queue. A successful load clears
+		// the stopped flag and starts the freshly loaded track playing.
 		if atomic.LoadInt32(&p.nextTrack) == 1 {
 			atomic.StoreInt32(&p.nextTrack, 0)
 			if p.loadTrack(int(atomic.LoadInt32(&p.currentTrack)) + 1) {
 				atomic.StoreInt32(&p.stopped, 0)
+				atomic.StoreInt32(&p.eof, 0)
 			}
 			continue
 		}
@@ -351,7 +403,13 @@ func (p *Player) decoderThread() {
 			atomic.StoreInt32(&p.prevTrack, 0)
 			if p.loadTrack(int(atomic.LoadInt32(&p.currentTrack)) - 1) {
 				atomic.StoreInt32(&p.stopped, 0)
+				atomic.StoreInt32(&p.eof, 0)
 			}
+			continue
+		}
+
+		if atomic.LoadInt32(&p.stopped) == 1 || atomic.LoadInt32(&p.paused) == 1 {
+			time.Sleep(10 * time.Millisecond)
 			continue
 		}
 
@@ -360,7 +418,16 @@ func (p *Player) decoderThread() {
 		p.mu.RUnlock()
 
 		if currentFile == nil {
-			time.Sleep(10 * time.Millisecond)
+			// We are meant to be playing (not paused/stopped) but no decoder is
+			// loaded — e.g. the current track was just removed, or playback is
+			// restarting from the top. Load the track at the current index.
+			if p.loadTrack(int(atomic.LoadInt32(&p.currentTrack))) {
+				atomic.StoreInt32(&p.eof, 0)
+			} else {
+				atomic.StoreInt32(&p.stopped, 1)
+				atomic.StoreInt32(&p.eof, 1)
+				time.Sleep(10 * time.Millisecond)
+			}
 			continue
 		}
 
@@ -524,6 +591,22 @@ func (p *Player) processCallback(buffer []byte, frames int) int {
 
 // Control methods
 func (p *Player) Play() {
+	// If the queue previously played past its end, restart from the top: drop
+	// the exhausted decoder and point at track 0 so the decoder loop reloads it.
+	if atomic.LoadInt32(&p.eof) == 1 {
+		atomic.StoreInt32(&p.currentTrack, 0)
+		atomic.StoreInt32(&p.eof, 0)
+		p.mu.Lock()
+		if p.currentFile != nil {
+			p.currentFile.Close()
+			p.currentFile = nil
+		}
+		if p.nextFile != nil {
+			p.nextFile.Close()
+			p.nextFile = nil
+		}
+		p.mu.Unlock()
+	}
 	atomic.StoreInt32(&p.paused, 0)
 	atomic.StoreInt32(&p.stopped, 0)
 }
@@ -533,8 +616,13 @@ func (p *Player) Pause() {
 }
 
 func (p *Player) Stop() {
+	// Stop is not Pause: halt playback AND rewind the current track to its
+	// start so a subsequent Play restarts it from the beginning. The actual
+	// rewind (decoder seek + ring-buffer clear + position reset) is done by the
+	// decoder loop when it sees stopReset, keeping all buffer mutation on one
+	// goroutine.
 	atomic.StoreInt32(&p.stopped, 1)
-	p.ringBuffer.Clear()
+	atomic.StoreInt32(&p.stopReset, 1)
 }
 
 func (p *Player) Next() {
