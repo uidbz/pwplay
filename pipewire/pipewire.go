@@ -103,6 +103,7 @@ type Stream struct {
 	events   *C.struct_pw_stream_events
 	userData unsafe.Pointer
 	callback ProcessCallback
+	channels int
 	mu       sync.Mutex
 }
 
@@ -216,6 +217,7 @@ func NewStreamWithOptions(name string, format AudioFormat, callback ProcessCallb
 		listener: listener,
 		events:   events,
 		callback: callback,
+		channels: format.Channels,
 	}
 
 	// Register the stream in our global registry
@@ -344,8 +346,13 @@ func go_on_process_callback(userdata unsafe.Pointer) {
 		return
 	}
 
-	// Calculate requested frames
-	stride := C.int(4 * 2) // 4 bytes per sample (float32) * 2 channels
+	// Calculate requested frames. Stride is float32 (4 bytes) per sample times
+	// the stream's channel count; a hardcoded 2 garbled mono playback.
+	channels := stream.channels
+	if channels <= 0 {
+		channels = 2
+	}
+	stride := C.int(4 * channels)
 	maxFrames := C.int(data.maxsize) / stride
 	requestedFrames := buf.requested
 
