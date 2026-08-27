@@ -17,12 +17,20 @@ import (
 	"git.sr.ht/~uid/pwplay/pipewire"
 )
 
-// Lock-free ring buffer using atomic operations for single producer/consumer
+// Lock-free ring buffer using atomic operations for single producer/consumer.
+//
+// read and write are MONOTONIC total interleaved-sample counts (never wrap);
+// the physical slot is index = pos % size. Because they only ever advance,
+// write serves as a global "samples ever produced" clock and read as a global
+// "samples ever consumed" clock. Track-boundary markers are anchored to write
+// offsets and resolved against read (see trackBoundary), which is what makes
+// position/track reporting follow the audio actually leaving the ring rather
+// than the decoder that runs up to a full buffer ahead of it.
 type RingBuffer struct {
 	buffer []float32
 	size   int
-	read   uint64 // atomic
-	write  uint64 // atomic
+	read   uint64 // atomic; monotonic count of interleaved samples consumed
+	write  uint64 // atomic; monotonic count of interleaved samples produced
 }
 
 func NewRingBuffer(size int) *RingBuffer {
@@ -35,23 +43,16 @@ func NewRingBuffer(size int) *RingBuffer {
 func (rb *RingBuffer) Write(samples []float32) int {
 	written := 0
 	for _, sample := range samples {
-		// Load current positions atomically
 		writePos := atomic.LoadUint64(&rb.write)
 		readPos := atomic.LoadUint64(&rb.read)
 
-		// Calculate next write position
-		nextWrite := (writePos + 1) % uint64(rb.size)
-
-		// Check if buffer is full
-		if nextWrite == readPos%uint64(rb.size) {
+		// Full when the unread span equals capacity.
+		if writePos-readPos >= uint64(rb.size) {
 			break
 		}
 
-		// Write sample at current position
 		rb.buffer[writePos%uint64(rb.size)] = sample
-
-		// Update write position atomically
-		atomic.StoreUint64(&rb.write, nextWrite)
+		atomic.StoreUint64(&rb.write, writePos+1)
 		written++
 	}
 	return written
@@ -60,42 +61,38 @@ func (rb *RingBuffer) Write(samples []float32) int {
 func (rb *RingBuffer) Read(samples []float32) int {
 	read := 0
 	for i := range samples {
-		// Load current positions atomically
 		readPos := atomic.LoadUint64(&rb.read)
 		writePos := atomic.LoadUint64(&rb.write)
 
-		// Check if buffer is empty
-		if readPos%uint64(rb.size) == writePos%uint64(rb.size) {
+		// Empty when read has caught up to write.
+		if readPos == writePos {
 			break
 		}
 
-		// Read sample at current position
 		samples[i] = rb.buffer[readPos%uint64(rb.size)]
-
-		// Update read position atomically
-		atomic.StoreUint64(&rb.read, (readPos+1)%uint64(rb.size))
+		atomic.StoreUint64(&rb.read, readPos+1)
 		read++
 	}
 	return read
 }
 
 func (rb *RingBuffer) Available() int {
-	readPos := atomic.LoadUint64(&rb.read)
-	writePos := atomic.LoadUint64(&rb.write)
-
-	rIdx := readPos % uint64(rb.size)
-	wIdx := writePos % uint64(rb.size)
-
-	if wIdx >= rIdx {
-		return int(wIdx - rIdx)
-	}
-	return rb.size - int(rIdx) + int(wIdx)
+	return int(atomic.LoadUint64(&rb.write) - atomic.LoadUint64(&rb.read))
 }
 
+// Clear discards all pending (written-but-unread) samples while keeping the
+// monotonic counters intact: read is advanced to write rather than both being
+// zeroed. This preserves the global sample clock across seeks/track-loads so
+// boundary markers anchored to write offsets stay valid.
 func (rb *RingBuffer) Clear() {
-	atomic.StoreUint64(&rb.read, 0)
-	atomic.StoreUint64(&rb.write, 0)
+	atomic.StoreUint64(&rb.read, atomic.LoadUint64(&rb.write))
 }
+
+// WritePos returns the monotonic count of interleaved samples produced so far.
+func (rb *RingBuffer) WritePos() uint64 { return atomic.LoadUint64(&rb.write) }
+
+// ReadPos returns the monotonic count of interleaved samples consumed so far.
+func (rb *RingBuffer) ReadPos() uint64 { return atomic.LoadUint64(&rb.read) }
 
 type Player struct {
 	stream       *pipewire.Stream
@@ -123,20 +120,19 @@ type Player struct {
 	// and performs the seek when it finds a non-negative value.
 	seekTarget int64 // atomic; -1 = no pending seek
 
-	// Position tracking. The decoder thread writes decoderPos (the decoder's
-	// current sample position). The process callback atomically advances
-	// playbackPos each time it consumes samples from the ring buffer, but on
-	// seek we need to snap it to the new position. We use samplesInBuffer to
-	// know the offset between decoder position and actual playback position.
-	decoderPos int64 // atomic; per-channel sample position of the decoder
-	// playbackSamples counts interleaved samples consumed by the callback
-	// since the last seek/track-change. Combined with seekBase, this gives
-	// the current playback position.
-	seekBase        int64 // atomic; set on seek/track-change to decoder target
-	playbackSamples int64 // atomic; interleaved samples consumed since seekBase
-
-	// Duration of the current track in per-channel samples, or -1 if unknown.
-	trackDuration int64 // atomic
+	// Position/track reporting is driven by the ring buffer's consumer clock,
+	// not the decoder. The decoder runs up to a full buffer (~3s) ahead of the
+	// audio actually leaving the ring, so resetting counters when the DECODER
+	// crosses a track boundary reports the new track ~3s before you hear it and
+	// mis-attributes the outgoing track's buffered tail to the incoming track.
+	//
+	// Instead, every time the decoder starts feeding a track's samples it
+	// records a boundary anchored to the ring's write offset (the exact sample
+	// count at which that track's first sample lands). Position()/CurrentTrack()
+	// then resolve the boundary whose write offset the consumer (read clock) has
+	// actually reached, so reporting flips precisely when the audio does.
+	boundaries []trackBoundary
+	boundMu    sync.Mutex
 
 	// Volume as a linear gain factor stored atomically as uint32 (float32 bits).
 	// 0.0 = silent, 1.0 = unity gain (default), values > 1.0 = amplify.
@@ -145,6 +141,75 @@ type Player struct {
 	// Passthrough mode: exclusive device access, no PipeWire resampling/mixing,
 	// no software volume. Enables bit-perfect output.
 	passthrough bool
+}
+
+// trackBoundary marks where a track's audio begins within the ring buffer's
+// monotonic output stream. writeOffset is the ring write count at which the
+// track's first sample was produced; the consumer reaches it exactly when all
+// prior tracks' samples have been played, so track transitions in the reported
+// position/number line up sample-accurately with the audio.
+type trackBoundary struct {
+	writeOffset uint64 // ring.write value where this track's first sample lands
+	track       int    // playlist index
+	startSample int64  // per-channel position within the track at writeOffset
+	duration    int64  // per-channel total samples, or -1 if unknown
+}
+
+// pushBoundary records a new track boundary at the current ring write offset.
+// Used for gapless transitions, where earlier tracks' samples are still queued
+// ahead of this one.
+func (p *Player) pushBoundary(track int, startSample, duration int64) {
+	off := p.ringBuffer.WritePos()
+	p.boundMu.Lock()
+	p.boundaries = append(p.boundaries, trackBoundary{off, track, startSample, duration})
+	p.boundMu.Unlock()
+}
+
+// resetBoundaries replaces the boundary list with a single entry at the current
+// ring write offset. Used after the ring is cleared (seek, stop-rewind,
+// loadTrack) when no prior audio remains queued, so reporting snaps immediately
+// to the new track/position.
+func (p *Player) resetBoundaries(track int, startSample, duration int64) {
+	off := p.ringBuffer.WritePos()
+	p.boundMu.Lock()
+	p.boundaries = []trackBoundary{{off, track, startSample, duration}}
+	p.boundMu.Unlock()
+}
+
+// activeBoundary returns the boundary the consumer is currently within (the
+// last one whose write offset the read clock has reached), the current consumed
+// sample count, and whether a boundary exists. Fully-consumed boundaries are
+// pruned as a side effect.
+func (p *Player) activeBoundary() (trackBoundary, uint64, bool) {
+	consumed := p.ringBuffer.ReadPos()
+	p.boundMu.Lock()
+	defer p.boundMu.Unlock()
+
+	if len(p.boundaries) == 0 {
+		return trackBoundary{}, consumed, false
+	}
+
+	active := 0
+	for i, b := range p.boundaries {
+		if b.writeOffset <= consumed {
+			active = i
+		} else {
+			break
+		}
+	}
+	if active > 0 {
+		p.boundaries = p.boundaries[active:]
+	}
+	return p.boundaries[0], consumed, true
+}
+
+// playbackTrack returns the playlist index of the track currently being heard,
+// falling back to the decoder's index before any boundary is recorded.
+func (p *Player) playbackTrack() int {
+	if b, _, ok := p.activeBoundary(); ok {
+		return b.track
+	}
+	return int(atomic.LoadInt32(&p.currentTrack))
 }
 
 // ExpandPlaylist takes a list of paths (files or directories) and returns
@@ -172,6 +237,7 @@ func ExpandPlaylist(paths []string) ([]string, error) {
 
 		if info.IsDir() {
 			// Walk directory recursively
+			var dirFiles []string
 			err := filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
 				if err != nil {
 					return err
@@ -179,7 +245,7 @@ func ExpandPlaylist(paths []string) ([]string, error) {
 				if !info.IsDir() {
 					ext := strings.ToLower(filepath.Ext(filePath))
 					if supported[ext] {
-						files = append(files, filePath)
+						dirFiles = append(dirFiles, filePath)
 					}
 				}
 				return nil
@@ -187,6 +253,12 @@ func ExpandPlaylist(paths []string) ([]string, error) {
 			if err != nil {
 				return nil, fmt.Errorf("error scanning directory %s: %w", path, err)
 			}
+			// Sort only within a directory expansion so a filesystem walk yields
+			// a stable order. Explicitly listed paths keep their caller-provided
+			// order — an album's tracks arrive pre-ordered and must not be
+			// re-sorted (their stream URLs would otherwise sort by content hash).
+			sort.Strings(dirFiles)
+			files = append(files, dirFiles...)
 		} else {
 			// Single file
 			ext := strings.ToLower(filepath.Ext(path))
@@ -201,9 +273,6 @@ func ExpandPlaylist(paths []string) ([]string, error) {
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no audio files found")
 	}
-
-	// Sort files for consistent playback order
-	sort.Strings(files)
 
 	return files, nil
 }
@@ -252,8 +321,9 @@ func NewPlayerWithOptions(files []string, opts PlayerOptions) (*Player, error) {
 	}
 
 	atomic.StoreInt64(&p.seekTarget, -1)
-	atomic.StoreInt64(&p.trackDuration, firstFile.Duration())
 	atomic.StoreUint32(&p.volume, math.Float32bits(1.0))
+	// Anchor track 0 at the start of the (empty) ring's output stream.
+	p.resetBoundaries(0, 0, firstFile.Duration())
 
 	if opts.StartPaused {
 		atomic.StoreInt32(&p.paused, 1)
@@ -349,12 +419,11 @@ func (p *Player) decoderThread() {
 				if err != nil {
 					log.Printf("Seek failed: %v", err)
 				} else {
-					// Clear ring buffer so stale audio is discarded immediately
+					// Clear ring buffer so stale audio is discarded immediately,
+					// then re-anchor the current track at the seek target so the
+					// reported position snaps there.
 					p.ringBuffer.Clear()
-					// Reset playback position tracking
-					atomic.StoreInt64(&p.seekBase, target)
-					atomic.StoreInt64(&p.playbackSamples, 0)
-					atomic.StoreInt64(&p.decoderPos, target)
+					p.resetBoundaries(int(atomic.LoadInt32(&p.currentTrack)), target, currentFile.Duration())
 				}
 			}
 			// Clear the seek request regardless of success
@@ -374,15 +443,15 @@ func (p *Player) decoderThread() {
 			p.mu.RLock()
 			currentFile := p.currentFile
 			p.mu.RUnlock()
+			dur := int64(-1)
 			if currentFile != nil {
 				if err := currentFile.Seek(0); err != nil {
 					log.Printf("Stop rewind failed: %v", err)
 				}
+				dur = currentFile.Duration()
 			}
 			p.ringBuffer.Clear()
-			atomic.StoreInt64(&p.seekBase, 0)
-			atomic.StoreInt64(&p.playbackSamples, 0)
-			atomic.StoreInt64(&p.decoderPos, 0)
+			p.resetBoundaries(int(atomic.LoadInt32(&p.currentTrack)), 0, dur)
 			atomic.StoreInt64(&p.seekTarget, -1)
 			continue
 		}
@@ -390,9 +459,13 @@ func (p *Player) decoderThread() {
 		// Track navigation is honored even while paused or stopped so the user
 		// can skip around a finished or paused queue. A successful load clears
 		// the stopped flag and starts the freshly loaded track playing.
+		// Navigate relative to the track being HEARD (playbackTrack), not the
+		// decoder's index. The decoder can be up to a track ahead during a
+		// gapless transition; skipping from the decoder index would jump over
+		// the track the user currently sees playing.
 		if atomic.LoadInt32(&p.nextTrack) == 1 {
 			atomic.StoreInt32(&p.nextTrack, 0)
-			if p.loadTrack(int(atomic.LoadInt32(&p.currentTrack)) + 1) {
+			if p.loadTrack(p.playbackTrack() + 1) {
 				atomic.StoreInt32(&p.stopped, 0)
 				atomic.StoreInt32(&p.eof, 0)
 			}
@@ -401,7 +474,7 @@ func (p *Player) decoderThread() {
 
 		if atomic.LoadInt32(&p.prevTrack) == 1 {
 			atomic.StoreInt32(&p.prevTrack, 0)
-			if p.loadTrack(int(atomic.LoadInt32(&p.currentTrack)) - 1) {
+			if p.loadTrack(p.playbackTrack() - 1) {
 				atomic.StoreInt32(&p.stopped, 0)
 				atomic.StoreInt32(&p.eof, 0)
 			}
@@ -436,40 +509,49 @@ func (p *Player) decoderThread() {
 		n, err := currentFile.ReadSamples(sampleBuf)
 		if err != nil {
 			if err == io.EOF {
-				// Current track finished - check for preloaded next
+				// Current track finished. Advance to the next track WITHOUT
+				// clearing the ring: the outgoing track's tail is still queued,
+				// and the next track's samples must be appended behind it. Prefer
+				// the preloaded decoder; if preload missed (it is timing-driven
+				// and unreliable), open the next track inline here. Clearing the
+				// ring on natural advance — as loadTrack does — would drop the
+				// tail, causing a gap and a truncated track, which is exactly the
+				// bug this path replaces.
 				p.mu.Lock()
-				if p.nextFile != nil {
-					// Gapless transition to preloaded track
+				next := p.nextFile
+				p.nextFile = nil
+				if next == nil {
+					nextIdx := int(atomic.LoadInt32(&p.currentTrack)) + 1
+					if nextIdx < len(p.playlist) {
+						f, e := OpenAudioFile(p.playlist[nextIdx])
+						if e != nil {
+							log.Printf("Failed to open next track %d: %v", nextIdx+1, e)
+						} else {
+							next = f
+						}
+					}
+				}
+				if next != nil {
 					if p.currentFile != nil {
 						p.currentFile.Close()
 					}
-					p.currentFile = p.nextFile
-					p.nextFile = nil
-					atomic.AddInt32(&p.currentTrack, 1)
-					atomic.StoreInt64(&p.trackDuration, p.currentFile.Duration())
-					// Reset position tracking for new track
-					atomic.StoreInt64(&p.seekBase, 0)
-					atomic.StoreInt64(&p.playbackSamples, 0)
-					atomic.StoreInt64(&p.decoderPos, 0)
-					log.Printf("Gapless transition to track %d", atomic.LoadInt32(&p.currentTrack)+1)
+					p.currentFile = next
+					newTrack := int(atomic.AddInt32(&p.currentTrack, 1))
+					// Anchor the new track at the current write offset; the
+					// consumer reaches it exactly when the queued tail finishes.
+					p.pushBoundary(newTrack, 0, next.Duration())
+					log.Printf("Gapless advance to track %d", newTrack+1)
 					p.mu.Unlock()
 					continue
 				}
 				p.mu.Unlock()
 
-				// No preloaded track - try to load next
-				if !p.loadTrack(int(atomic.LoadInt32(&p.currentTrack)) + 1) {
-					atomic.StoreInt32(&p.stopped, 1)
-					atomic.StoreInt32(&p.eof, 1)
-				}
+				// No further track: stop once the queued tail drains.
+				atomic.StoreInt32(&p.stopped, 1)
+				atomic.StoreInt32(&p.eof, 1)
 			}
 			time.Sleep(10 * time.Millisecond)
 			continue
-		}
-
-		// Update decoder position
-		if currentFile != nil {
-			atomic.StoreInt64(&p.decoderPos, currentFile.Position())
 		}
 
 		// Preload next track when buffer is getting low
@@ -549,12 +631,10 @@ func (p *Player) loadTrack(idx int) bool {
 
 	p.currentFile = file
 	atomic.StoreInt32(&p.currentTrack, int32(idx))
-	atomic.StoreInt64(&p.trackDuration, file.Duration())
-	// Reset position tracking for new track
-	atomic.StoreInt64(&p.seekBase, 0)
-	atomic.StoreInt64(&p.playbackSamples, 0)
-	atomic.StoreInt64(&p.decoderPos, 0)
+	// A direct load (next/prev/removal reload) discards queued audio, so clear
+	// the ring and re-anchor this track at the current output offset.
 	p.ringBuffer.Clear()
+	p.resetBoundaries(idx, 0, file.Duration())
 
 	log.Printf("Now playing [%d/%d]: %s", idx+1, len(p.playlist), filepath.Base(p.playlist[idx]))
 	return true
@@ -570,9 +650,8 @@ func (p *Player) processCallback(buffer []byte, frames int) int {
 
 	output := unsafe.Slice((*float32)(unsafe.Pointer(&buffer[0])), frames*p.channels)
 	read := p.ringBuffer.Read(output)
-
-	// Track playback position: 'read' is number of interleaved samples consumed
-	atomic.AddInt64(&p.playbackSamples, int64(read))
+	// The ring's monotonic read clock (advanced inside Read) is the playback
+	// position; no separate counter is needed.
 
 	// Apply volume gain
 	gain := math.Float32frombits(atomic.LoadUint32(&p.volume))
@@ -770,14 +849,15 @@ func (p *Player) IsEOF() bool {
 	return atomic.LoadInt32(&p.eof) == 1
 }
 
+// CurrentTrack returns the playlist index of the track currently being heard.
 func (p *Player) CurrentTrack() int {
-	return int(atomic.LoadInt32(&p.currentTrack))
+	return p.playbackTrack()
 }
 
 func (p *Player) CurrentFile() string {
+	idx := p.playbackTrack()
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	idx := int(atomic.LoadInt32(&p.currentTrack))
 	if idx >= 0 && idx < len(p.playlist) {
 		return p.playlist[idx]
 	}
@@ -798,21 +878,29 @@ func (p *Player) Position() float64 {
 	if p.sampleRate <= 0 || p.channels <= 0 {
 		return 0
 	}
-	base := atomic.LoadInt64(&p.seekBase)
-	consumed := atomic.LoadInt64(&p.playbackSamples)
-	// consumed is in interleaved samples; divide by channels for per-channel
-	pos := base + consumed/int64(p.channels)
+	b, consumed, ok := p.activeBoundary()
+	if !ok {
+		return 0
+	}
+	// Interleaved samples consumed since this track's first sample landed,
+	// converted to per-channel and offset by where the track started (nonzero
+	// after a seek).
+	var perChan int64
+	if consumed > b.writeOffset {
+		perChan = int64(consumed-b.writeOffset) / int64(p.channels)
+	}
+	pos := b.startSample + perChan
 	return float64(pos) / float64(p.sampleRate)
 }
 
 // TrackDuration returns the total duration of the current track in seconds,
 // or -1 if unknown.
 func (p *Player) TrackDuration() float64 {
-	dur := atomic.LoadInt64(&p.trackDuration)
-	if dur <= 0 || p.sampleRate <= 0 {
+	b, _, ok := p.activeBoundary()
+	if !ok || b.duration <= 0 || p.sampleRate <= 0 {
 		return -1
 	}
-	return float64(dur) / float64(p.sampleRate)
+	return float64(b.duration) / float64(p.sampleRate)
 }
 
 // CurrentTrackMetadata returns metadata for the current track
