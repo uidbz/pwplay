@@ -777,6 +777,36 @@ func (p *Player) MoveItems(from, count, dst int) error {
 	newPlaylist = append(newPlaylist, rest[dst:]...)
 	p.playlist = newPlaylist
 
+	// Remap recorded boundary track indices so the reported playback track
+	// follows the reorder. Boundaries hold *playlist indices*, and reporting
+	// reads them (see playbackTrack); without this the poll would keep returning
+	// the moved track's old index and the UI's now-playing marker would not
+	// follow. Build old→new by replaying the same rebuild on an index array.
+	restIdx := make([]int, 0, n-count)
+	for i := 0; i < from; i++ {
+		restIdx = append(restIdx, i)
+	}
+	for i := from + count; i < n; i++ {
+		restIdx = append(restIdx, i)
+	}
+	newOrder := make([]int, 0, n)
+	newOrder = append(newOrder, restIdx[:dst]...)
+	for i := from; i < from+count; i++ {
+		newOrder = append(newOrder, i)
+	}
+	newOrder = append(newOrder, restIdx[dst:]...)
+	remap := make([]int, n)
+	for newPos, old := range newOrder {
+		remap[old] = newPos
+	}
+	p.boundMu.Lock()
+	for i := range p.boundaries {
+		if t := p.boundaries[i].track; t >= 0 && t < n {
+			p.boundaries[i].track = remap[t]
+		}
+	}
+	p.boundMu.Unlock()
+
 	// Update currentTrack index to follow the currently playing track
 	if cur >= from && cur < from+count {
 		// Current track is inside the moved range
