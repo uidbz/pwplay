@@ -5,12 +5,13 @@ REST API for controlling the pwplay audio server.
 ## Features
 
 - Play/Pause/Stop controls
-- Next/Previous track navigation
+- Next/Previous track navigation and direct track jump
 - Seek (absolute and relative)
 - Volume control
 - Add/Remove/Move tracks dynamically
+- Track metadata and album cover endpoints
 - Directory scanning (recursive)
-- HTTP URL streaming
+- HTTP URL playback
 - Gapless playback
 - Multi-format: FLAC, MP3, WAV, OGG
 - Passthrough mode (no resampling, no remixing, no software volume)
@@ -41,7 +42,7 @@ pwplay-server -passthrough ~/Music/album
 pwplay-server -passthrough -exclusive ~/Music/album
 ```
 
-See the [Passthrough and Exclusive Modes](README.md#passthrough-and-exclusive-modes) section in the README for details.
+See the [Passthrough and Exclusive Modes](../README.md#passthrough-and-exclusive-modes) section in the README for details.
 
 ## API Endpoints
 
@@ -56,10 +57,11 @@ curl http://localhost:8080/status
   "playing": true,
   "paused": false,
   "stopped": false,
+  "passthrough": false,
   "currentTrack": 0,
   "currentFile": "track1.flac",
-  "totalTracks": 3,
   "playlist": ["track1.flac", "track2.flac", "track3.flac"],
+  "totalTracks": 3,
   "position": 42.5,
   "trackDuration": 180.0,
   "volume": 1.0
@@ -80,6 +82,8 @@ curl -X POST http://localhost:8080/pause
 
 ### POST /stop
 
+Stops playback and rewinds to the start of the current track.
+
 ```bash
 curl -X POST http://localhost:8080/stop
 ```
@@ -94,6 +98,16 @@ curl -X POST http://localhost:8080/next
 
 ```bash
 curl -X POST http://localhost:8080/previous
+```
+
+### POST /goto
+
+Jump to and play the track at the given 0-based playlist index.
+
+```bash
+curl -X POST http://localhost:8080/goto \
+  -H "Content-Type: application/json" \
+  -d '{"index": 3}'
 ```
 
 ### POST /seek
@@ -112,6 +126,13 @@ curl -X POST http://localhost:8080/seek \
   -d '{"relative": -10}'
 ```
 
+```json
+{
+  "status": "seeked",
+  "position": 32.5
+}
+```
+
 ### POST /volume
 
 Set playback volume (0.0 = silent, 1.0 = default, 2.0 = max). Ignored in passthrough mode.
@@ -124,7 +145,7 @@ curl -X POST http://localhost:8080/volume \
 
 ### POST /add
 
-Add files, directories, or URLs to the playlist. Accepts a `paths` array.
+Add files, directories, or URLs to the playlist. Accepts a `paths` array. Directories are expanded recursively on the server.
 
 ```bash
 curl -X POST http://localhost:8080/add \
@@ -141,23 +162,67 @@ curl -X POST http://localhost:8080/add \
 
 ### POST /remove
 
-Remove track by 0-based index.
+Remove track by 0-based index. Removing the current track stops and restarts playback at the track that takes its place.
 
 ```bash
 curl -X POST http://localhost:8080/remove \
   -H "Content-Type: application/json" \
-  -d '{"Index": 2}'
+  -d '{"index": 2}'
 ```
 
 ### POST /move
 
-Move a range of playlist items to a new position.
+Move a range of playlist items to a new position. The currently playing track keeps playing and follows the move.
 
 ```bash
 # Move items at indices 5,6,7 to start at index 0
 curl -X POST http://localhost:8080/move \
   -H "Content-Type: application/json" \
   -d '{"from": 5, "count": 3, "to": 0}'
+```
+
+### GET /metadata
+
+Metadata for the current track (tags such as title, artist, album, track number). Returns 404 if unavailable.
+
+```bash
+curl http://localhost:8080/metadata
+```
+
+```json
+{
+  "title": "Song Title",
+  "album": "Album Name",
+  "artist": "Artist",
+  "albumArtist": "Artist",
+  "composer": "",
+  "genre": "Jazz",
+  "year": 2024,
+  "track": 3,
+  "trackTotal": 12,
+  "disc": 1,
+  "discTotal": 1,
+  "lyrics": "",
+  "comment": "",
+  "format": "FLAC",
+  "hasPicture": true
+}
+```
+
+### GET /playlist-metadata
+
+Metadata for all tracks in the playlist, as a JSON array.
+
+```bash
+curl http://localhost:8080/playlist-metadata
+```
+
+### GET /cover
+
+Album cover image of the current track. The `Content-Type` header carries the image MIME type (e.g. `image/jpeg`). Returns 404 if the track has no embedded cover.
+
+```bash
+curl -OJ http://localhost:8080/cover
 ```
 
 ## Build
@@ -171,7 +236,7 @@ go build -o pwplay-server ./cmd/server
 ## Notes
 
 - The service starts paused; use `/play` to begin
-- First track determines audio format (sample rate, channels)
+- First track determines the audio format (sample rate, channels) for the whole session
 - HTTP URLs are downloaded to a temp file before playback for reliability and seek support
 - Seek is immediate with no audible gap
 - Directories are scanned recursively for `.flac`, `.mp3`, `.wav`, `.ogg`

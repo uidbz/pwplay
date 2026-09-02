@@ -27,7 +27,7 @@ Make sure you have Go 1.22 or later installed. Check with:
 go version
 ```
 
-If you need to install Go, download it from https://go.lang.org/dl/
+If you need to install Go, download it from https://go.dev/dl/
 
 ### 3. Verify PipeWire is Running
 
@@ -42,18 +42,27 @@ systemctl --user start pipewire
 
 ## Building the Project
 
-### Option 1: Using Make
-
 ```bash
-make install-deps
 make build
 ```
 
-### Option 2: Using Go directly
+Produces `pwplay-server`, `pwplay-client`, and `pwplay-player`.
+
+To build with Go directly:
 
 ```bash
 go mod download
-go build -o play_flac ./examples/play_flac.go
+go build -o pwplay-server ./cmd/server
+go build -o pwplay-client ./cmd/client
+go build -o pwplay-player ./cmd/player
+```
+
+Note: depending on your toolchain, cgo may reject PipeWire's
+`-fno-strict-overflow` compiler flag. If you see
+`invalid flag in pkg-config --cflags: -fno-strict-overflow`, build with:
+
+```bash
+export CGO_CFLAGS_ALLOW='-fno-strict-overflow'
 ```
 
 ## Running the Example
@@ -64,12 +73,12 @@ go build -o play_flac ./examples/play_flac.go
 wget https://github.com/xiph/flac/raw/master/test/flac-test-files/subset/01%20-%20blocksize%204096.flac -O test.flac
 ```
 
-2. Run the player:
+2. Play it:
 ```bash
-./play_flac test.flac
+./pwplay-player test.flac
 ```
 
-3. Stop playback with Ctrl+C
+3. Press `space` to start playback, `q` to quit
 
 ## Troubleshooting
 
@@ -96,7 +105,9 @@ pactl list sinks
 
 ### "Choppy or stuttering audio"
 
-Try increasing the buffer size by modifying the `bufferSize` field in `examples/play_flac.go`.
+Check system load (`htop`) and verify no CPU throttling. The lock-free
+ring buffer makes underruns unlikely; if they occur, they are logged as
+warnings by the player.
 
 ### "Build errors with cgo"
 
@@ -113,13 +124,16 @@ pkg-config --cflags --libs libpipewire-0.3
 
 ## Integration into Your Project
 
-To use these bindings in your own project:
+Add the module to your project:
 
-1. Copy the `pipewire/` directory to your project
-2. Import it: `import "yourproject/pipewire"`
-3. Update your `go.mod` as needed
+```bash
+go get github.com/uidbz/pwplay
+```
 
-Or reference it as a module:
+Then import the package you need:
+
 ```go
-import "github.com/uidbz/pwplay/pipewire"
+import "github.com/uidbz/pwplay/player"    // playback engine
+import "github.com/uidbz/pwplay/client"    // REST API client
+import "github.com/uidbz/pwplay/pipewire"  // low-level PipeWire bindings
 ```

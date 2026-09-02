@@ -7,11 +7,11 @@
 Added ability to play directories with automatic recursive scanning for audio files.
 
 #### Features
-- ✅ Recursive directory scanning for audio files
-- ✅ Automatic sorting of files for consistent playback order
-- ✅ Support for mixing files and directories in playlist
-- ✅ Filters for supported formats (FLAC, MP3, WAV, OGG)
-- ✅ Proper error handling for missing or empty directories
+- Recursive directory scanning for audio files
+- Automatic sorting of files for consistent playback order
+- Support for mixing files and directories in a playlist
+- Filters for supported formats (FLAC, MP3, WAV, OGG)
+- Proper error handling for missing or empty directories
 
 #### New API
 - `ExpandPlaylist(paths []string) ([]string, error)` - Expands directories to audio files
@@ -26,7 +26,7 @@ pwplay-player song.flac /path/to/album/
 ```
 
 #### Changes
-- Updated all example applications to support directory arguments
+- Updated all applications to support directory arguments
 - Added comprehensive test suite for playlist expansion
 - Improved usage messages with format information
 
@@ -42,10 +42,10 @@ Implemented lock-free ring buffer using atomic operations for improved real-time
 - Improved cache-line efficiency with uint64 atomic positions
 
 #### Performance Benefits
-- ✅ Zero mutex overhead in real-time audio callback
-- ✅ True wait-free reads/writes for single producer/consumer
-- ✅ Better CPU cache utilization
-- ✅ Reduced latency and jitter
+- Zero mutex overhead in real-time audio callback
+- Wait-free reads/writes for single producer/consumer
+- Better CPU cache utilization
+- Reduced latency and jitter
 
 #### Technical Details
 - Uses `sync/atomic` LoadUint64/StoreUint64 for position tracking
@@ -73,13 +73,13 @@ Complete refactoring with shared player implementation and multi-format support.
 - **pwplay-server**: REST API with full control
 
 #### Features
-- ✅ Gapless playback with next-track preloading
-- ✅ HTTP/HTTPS URL streaming
-- ✅ Multi-format support (FLAC, MP3, WAV, OGG)
-- ✅ 16/24/32-bit audio support (auto-converts to float32)
-- ✅ All playback controls (play/pause/stop/next/previous)
-- ✅ Dynamic playlist management (add/remove tracks)
-- ✅ Thread-safe operations
+- Gapless playback with next-track preloading
+- HTTP/HTTPS URL streaming
+- Multi-format support (FLAC, MP3, WAV, OGG)
+- 16/24/32-bit audio support (auto-converts to float32)
+- All playback controls (play/pause/stop/next/previous)
+- Dynamic playlist management (add/remove tracks)
+- Thread-safe operations
 
 #### Technical Details
 - Unified `AudioDecoder` interface for all formats
@@ -101,12 +101,12 @@ Fixed choppy audio in FLAC player.
 - Optimized callback to <0.1ms execution time
 
 #### Results
-- ✅ Smooth playback with no dropouts
-- ✅ No buffer underruns during playback
-- ✅ Fast, predictable callback timing
-- ✅ Follows real-time audio best practices
+- Smooth playback with no dropouts
+- No buffer underruns during playback
+- Fast, predictable callback timing
+- Follows real-time audio best practices
 
-See PERFORMANCE.md for detailed analysis.
+See docs/BENCHMARKS.md for performance numbers.
 
 ## v1.0.0 - 2026-03-12
 
@@ -141,7 +141,6 @@ Complete Go bindings for PipeWire with working examples.
 - **Input**: FLAC files with 16, 24, or 32-bit samples (S16/S24/S32)
 - **Internal**: Automatic conversion to float32 for PipeWire
 - **Output**: Float32 to PipeWire (industry standard for audio APIs)
-- **Note**: S16 is fully supported - FLAC's 16-bit audio is converted to float32
 
 #### Known Limitations
 - Playback only (no recording support yet)

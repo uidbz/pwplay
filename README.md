@@ -4,18 +4,18 @@ Audio player for Linux built on PipeWire, written in Go.
 
 ## Features
 
-- Multi-format: FLAC, MP3, WAV, OGG
-- Gapless playback with intelligent preloading
+- Multi-format: FLAC, MP3, WAV, OGG Vorbis
+- Gapless playback with next-track preloading
 - Seek support (all formats)
 - Software volume control
-- Passthrough mode for high-quality output (no resampling, no remixing, no software volume)
+- Passthrough mode (no resampling, no remixing, no software volume)
 - Optional exclusive device access
-- HTTP/HTTPS URL streaming (downloaded to temp file for reliable playback)
+- HTTP/HTTPS URL playback (downloaded to a temp file first)
 - Client/server architecture with REST API
 - Interactive TUI remote client
 - Interactive local player with keyboard controls
 - Lock-free ring buffer for real-time audio
-- Directory scanning (recursive)
+- Recursive directory scanning
 
 ## Project Structure
 
@@ -66,7 +66,7 @@ pwplay-server http://example.com/music.flac local.ogg
 ```
 
 Starts paused on `:8080`. Control via the REST API or the TUI client.
-See [WEBSERVICE.md](WEBSERVICE.md) for the full API reference.
+See [docs/WEBSERVICE.md](docs/WEBSERVICE.md) for the full API reference.
 
 ### TUI Client
 
@@ -78,7 +78,7 @@ pwplay-client myhost:8080  # remote server
 ```
 
 Single-keypress controls with live status display, progress bar, and playlist view.
-See [CLIENT.md](CLIENT.md) for details.
+See [docs/CLIENT.md](docs/CLIENT.md) for details.
 
 ### Interactive Local Player
 
@@ -88,7 +88,7 @@ Play audio directly (no server needed):
 pwplay-player ~/Music/album
 ```
 
-Controls: `space` play/pause, `n`/`p` next/prev, `f`/`b` seek +/-10s, `v`/`V` vol down/up, `m` mute, `s` stop, `i` info, `q` quit.
+Controls: `space` play/pause, `n`/`p` next/prev, `f`/`b` seek ±10s, `v`/`V` vol down/up, `m` mute, `s` stop, `i` info, `q` quit.
 
 ## Passthrough and Exclusive Modes
 
@@ -191,11 +191,14 @@ stream.Connect(format)
 
 ## Documentation
 
-- [WEBSERVICE.md](WEBSERVICE.md) - REST API reference
-- [CLIENT.md](CLIENT.md) - Client library and TUI client
-- [FORMATS.md](FORMATS.md) - Supported audio formats
-- [INSTALL.md](INSTALL.md) - Detailed installation guide
-- [BENCHMARKS.md](BENCHMARKS.md) - Performance benchmarks
+- [docs/WEBSERVICE.md](docs/WEBSERVICE.md) - REST API reference
+- [docs/CLIENT.md](docs/CLIENT.md) - Client library and TUI client
+- [docs/USAGE.md](docs/USAGE.md) - Using the applications
+- [docs/FORMATS.md](docs/FORMATS.md) - Supported audio formats
+- [docs/INSTALL.md](docs/INSTALL.md) - Detailed installation guide
+- [docs/QUICKSTART.md](docs/QUICKSTART.md) - Quick start
+- [docs/EXAMPLES.md](docs/EXAMPLES.md) - Example programs
+- [docs/BENCHMARKS.md](docs/BENCHMARKS.md) - Performance benchmarks
 - [CHANGELOG.md](CHANGELOG.md) - Version history
 
 ## License

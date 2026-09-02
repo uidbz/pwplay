@@ -113,15 +113,15 @@ Results:
 ```
 Sample rate: 44100 Hz
 Channels: 2
-Buffer duration: 1 second
-Size: 44100 * 2 * 4 bytes = 352,800 bytes (~345 KB)
+Buffer duration: 3 seconds
+Size: 44100 * 2 * 3 * 4 bytes = 1,058,400 bytes (~1 MB)
 ```
 
 ### Overhead
 
 - Ring buffer struct: 32 bytes
 - Atomic counters: 16 bytes
-- Total per player: ~345 KB
+- Total per player: ~1 MB
 
 **Efficiency:** Minimal memory footprint for real-time guarantee.
 
@@ -176,7 +176,7 @@ Even at 192kHz, the ring buffer uses <0.3% of available capacity.
 ### Cache-Friendly Design
 
 ```
-Ring buffer data:     ~345 KB (fits in L2 cache)
+Ring buffer data:     ~1 MB (fits in L2/L3 cache)
 Atomic operations:    Cache-line aligned
 Sequential access:    Optimal prefetching
 ```

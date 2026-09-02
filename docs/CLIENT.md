@@ -20,6 +20,7 @@ c.Pause()
 c.Stop()
 c.Next()
 c.Previous()
+c.Goto(3)          // jump to playlist index 3
 
 c.Seek(120.0)        // jump to 2:00
 c.SeekRelative(10)   // forward 10 seconds
@@ -54,6 +55,7 @@ func (c *Client) Status() (*Status, error)
 | `Playing` | `bool` | True if actively playing |
 | `Paused` | `bool` | True if paused |
 | `Stopped` | `bool` | True if stopped |
+| `Passthrough` | `bool` | True if the server runs in passthrough mode |
 | `CurrentTrack` | `int` | 0-based index of current track |
 | `CurrentFile` | `string` | Filename of current track |
 | `Playlist` | `[]string` | All tracks in the playlist |
@@ -70,6 +72,7 @@ func (c *Client) Pause() error
 func (c *Client) Stop() error
 func (c *Client) Next() error
 func (c *Client) Previous() error
+func (c *Client) Goto(index int) error
 ```
 
 ### Seek
@@ -96,6 +99,16 @@ func (c *Client) MoveItems(from, count, dst int) error
 ```
 
 `AddTracks` accepts file paths, directories, or HTTP URLs. Directories are expanded recursively on the server. `MoveItems` moves items `[from, from+count)` to start at index `dst`.
+
+### Metadata
+
+```go
+func (c *Client) Metadata() (*Metadata, error)
+func (c *Client) PlaylistMetadata() ([]*Metadata, error)
+func (c *Client) CoverURL() string
+```
+
+`Metadata` returns tags for the current track (title, artist, album, track/disc numbers, genre, year, lyrics, comment, format, `HasPicture`). `PlaylistMetadata` returns metadata for all tracks. `CoverURL` returns the URL of the server's `/cover` endpoint, which serves the current track's album art.
 
 ## TUI Client
 
