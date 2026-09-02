@@ -121,5 +121,5 @@ To use these bindings in your own project:
 
 Or reference it as a module:
 ```go
-import "git.sr.ht/~uid/pwplay/pipewire"
+import "github.com/uidbz/pwplay/pipewire"
 ```

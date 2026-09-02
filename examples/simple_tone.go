@@ -10,7 +10,7 @@ import (
 	"time"
 	"unsafe"
 
-	"git.sr.ht/~uid/pwplay/pipewire"
+	"github.com/uidbz/pwplay/pipewire"
 )
 
 // ToneGenerator generates a simple sine wave tone

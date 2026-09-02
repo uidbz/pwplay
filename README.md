@@ -139,7 +139,7 @@ pwplay-server -passthrough -exclusive ~/Music/album
 Core playback engine.
 
 ```go
-import "git.sr.ht/~uid/pwplay/player"
+import "github.com/uidbz/pwplay/player"
 
 files, _ := player.ExpandPlaylist([]string{"~/Music"})
 p, _ := player.NewPlayer(files, true)
@@ -165,7 +165,7 @@ p, _ := player.NewPlayerWithOptions(files, opts)
 HTTP client library for the server API.
 
 ```go
-import "git.sr.ht/~uid/pwplay/client"
+import "github.com/uidbz/pwplay/client"
 
 c := client.New("http://localhost:8080")
 c.Play()
@@ -179,7 +179,7 @@ s, _ := c.Status()
 Low-level PipeWire bindings.
 
 ```go
-import "git.sr.ht/~uid/pwplay/pipewire"
+import "github.com/uidbz/pwplay/pipewire"
 
 pipewire.Init()
 defer pipewire.Deinit()

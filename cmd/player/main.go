@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"git.sr.ht/~uid/pwplay/pipewire"
-	"git.sr.ht/~uid/pwplay/player"
+	"github.com/uidbz/pwplay/pipewire"
+	"github.com/uidbz/pwplay/player"
 )
 
 func printHelp() {

@@ -119,7 +119,7 @@ func (p *PlaylistPlayer) decoderThread() {
 
 ### New Code
 ```go
-import "git.sr.ht/~uid/pwplay/player"
+import "github.com/uidbz/pwplay/player"
 
 // Just create and use
 p, err := player.NewPlayer(files, startPaused)

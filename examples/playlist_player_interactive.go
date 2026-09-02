@@ -13,7 +13,7 @@ import (
 	"time"
 	"unsafe"
 
-	"git.sr.ht/~uid/pwplay/pipewire"
+	"github.com/uidbz/pwplay/pipewire"
 	"github.com/mewkiz/flac"
 	"github.com/mewkiz/flac/frame"
 )

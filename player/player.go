@@ -14,7 +14,7 @@ import (
 	"time"
 	"unsafe"
 
-	"git.sr.ht/~uid/pwplay/pipewire"
+	"github.com/uidbz/pwplay/pipewire"
 )
 
 // Lock-free ring buffer using atomic operations for single producer/consumer.

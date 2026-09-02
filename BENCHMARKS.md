@@ -12,7 +12,7 @@
 ```
 goos: linux
 goarch: amd64
-pkg: git.sr.ht/~uid/pwplay/player
+pkg: github.com/uidbz/pwplay/player
 cpu: AMD Ryzen Threadripper PRO 5945WX 12-Cores
 
 BenchmarkRingBufferWrite-24         423052    2826 ns/op    0 B/op    0 allocs/op

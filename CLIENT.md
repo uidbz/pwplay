@@ -3,7 +3,7 @@
 Go client library for the pwplay server API.
 
 ```go
-import "git.sr.ht/~uid/pwplay/client"
+import "github.com/uidbz/pwplay/client"
 ```
 
 ## Usage

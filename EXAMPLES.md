@@ -89,7 +89,7 @@ import (
     "log"
     "time"
     "unsafe"
-    "git.sr.ht/~uid/pwplay/pipewire"
+    "github.com/uidbz/pwplay/pipewire"
 )
 
 func main() {

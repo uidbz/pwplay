@@ -11,7 +11,7 @@ import (
 	"time"
 	"unsafe"
 
-	"git.sr.ht/~uid/pwplay/client"
+	"github.com/uidbz/pwplay/client"
 )
 
 // --- terminal raw mode (POSIX) ---
