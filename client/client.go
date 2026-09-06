@@ -171,6 +171,14 @@ func (c *Client) RemoveTrack(index int) error {
 	return c.post("/remove", map[string]int{"Index": index}, nil)
 }
 
+// ClearTracks empties the whole playlist and stops playback in one step
+// (instant, unlike N RemoveTrack calls, which the server applies one at a
+// time between decode iterations). Requires a server with the /clear
+// endpoint.
+func (c *Client) ClearTracks() error {
+	return c.post("/clear", nil, nil)
+}
+
 // MoveItems moves playlist items in the range [from, from+count) so they
 // start at index dst. The dst refers to the position in the playlist before
 // the items are removed from their original location.

@@ -198,6 +198,13 @@ func main() {
 		json.NewEncoder(w).Encode(map[string]string{"status": "removed"})
 	})
 
+	// Empty the whole playlist and stop playback in one step (instant,
+	// unlike N /remove calls, which the decoder loop drains one at a time).
+	http.HandleFunc("/clear", func(w http.ResponseWriter, r *http.Request) {
+		p.ClearTracks()
+		json.NewEncoder(w).Encode(map[string]string{"status": "cleared"})
+	})
+
 	// Move a range of playlist items to a new position.
 	// POST /move {"from": 5, "count": 3, "to": 0}
 	// Moves items at indices 5,6,7 to start at index 0.

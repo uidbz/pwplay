@@ -110,6 +110,7 @@ type Player struct {
 	gotoTrack    int32 // atomic; -1 = no request, else the index to jump to
 	addTrack     chan string
 	removeTrack  chan int
+	clearTracks  chan struct{}
 	stopDecode   chan bool
 	decodeDone   chan bool
 	// sampleRate/channels are int32 accessed atomically: they are written by
@@ -337,6 +338,7 @@ func NewPlayerWithOptions(files []string, opts PlayerOptions) (*Player, error) {
 		},
 		addTrack:    make(chan string, 10),
 		removeTrack: make(chan int, 10),
+		clearTracks: make(chan struct{}, 1),
 		stopDecode:  make(chan bool),
 		decodeDone:  make(chan bool),
 		passthrough: opts.Passthrough,
@@ -431,6 +433,29 @@ func (p *Player) decoderThread() {
 				}
 			}
 			p.mu.Unlock()
+		case <-p.clearTracks:
+			// A single clear replaces the whole playlist in one decoder-loop
+			// step, so the UI's Clear is instant even mid-play (unlike N
+			// one-at-a-time removes, which the loop drains between decode
+			// iterations).
+			p.mu.Lock()
+			p.playlist = p.playlist[:0]
+			if p.currentFile != nil {
+				p.currentFile.Close()
+				p.currentFile = nil
+			}
+			if p.nextFile != nil {
+				p.nextFile.Close()
+				p.nextFile = nil
+			}
+			p.mu.Unlock()
+			// Silence the ring immediately: it can hold seconds of buffered
+			// audio, which would otherwise keep playing after the clear.
+			p.ringBuffer.Clear()
+			atomic.StoreInt32(&p.currentTrack, 0)
+			atomic.StoreInt32(&p.stopped, 1)
+			atomic.StoreInt32(&p.eof, 1)
+			atomic.StoreInt64(&p.seekTarget, -1)
 		default:
 		}
 
@@ -791,6 +816,13 @@ func (p *Player) AddTrack(path string) {
 
 func (p *Player) RemoveTrack(idx int) {
 	p.removeTrack <- idx
+}
+
+// ClearTracks empties the playlist in one decoder-loop step and stops
+// playback: far faster than removing tracks one at a time, and correct when
+// nothing has been loaded yet (a bare playlist clear with no Play press).
+func (p *Player) ClearTracks() {
+	p.clearTracks <- struct{}{}
 }
 
 // MoveItems moves playlist items in the range [from, from+count) to start at
