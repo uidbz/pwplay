@@ -10,9 +10,9 @@ build:
 	@echo "Build complete: pwplay-server, pwplay-client, pwplay-player"
 
 # Install pwplay-server as a per-user service (systemd --user or OpenRC user
-# runlevel) and the binary to /usr/local/bin. Run the binary install as root:
+# runlevel) and the binary to /usr/local/bin. Run as the audio user via sudo:
 #   sudo make install
-# See contrib/install.sh and contrib/README.md.
+# Without root it installs just the user service file. See contrib/README.md.
 install:
 	./contrib/install.sh
 

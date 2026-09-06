@@ -10,22 +10,23 @@ service running as a dedicated user usually cannot reach the audio socket.
 From a checkout of this repo, as the user whose session owns the audio:
 
 ```
-sudo make install     # from the repo root
-# or equivalently:
-sudo ./contrib/install.sh
+sudo make install       # binary + service (uses SUDO_USER for the service)
+# or, without root (service file only):
+make install
 ```
 
 The installer:
 
 - builds `pwplay-server` (needs the Go toolchain and PipeWire dev libs) and
-  installs it to `/usr/local/bin`,
+  installs it to `/usr/local/bin` (root only),
 - detects systemd or OpenRC and installs the matching **user** service file:
   - systemd: `~/.config/systemd/user/pwplay-server.service`
-  - OpenRC:  `~/.local/share/rc/init.d/pwplay-server`
+  - OpenRC:  `~/.config/rc/init.d/pwplay-server`
 - enables the service (`systemctl --user enable` / `rc-update --user add`).
 
-When run under `sudo` it acts on `SUDO_USER`, not root. Without root it still
-installs the service file but skips the `/usr/local/bin` binary (edit
+Run it via `sudo`, not plain `su`: the service must belong to the user who owns
+the PipeWire session, so the script targets `SUDO_USER` and refuses to install a
+service for root. Without root it skips the `/usr/local/bin` binary (edit
 `ExecStart` if you keep the binary elsewhere).
 
 The service starts pwplay-server with **no arguments** — an empty queue driven
@@ -58,7 +59,7 @@ rc-service --user pwplay-server start
 |---------------------------------------------|-------------------------|
 | `/usr/local/bin/pwplay-server`              | binary                  |
 | `~/.config/systemd/user/pwplay-server.service` | systemd user unit    |
-| `~/.local/share/rc/init.d/pwplay-server`    | OpenRC user service     |
+| `~/.config/rc/init.d/pwplay-server`         | OpenRC user service     |
 | `~/.local/state/pwplay/`                    | OpenRC log              |
 
 ## Files

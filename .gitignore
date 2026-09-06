@@ -1,19 +1,20 @@
-# Binaries
-pwplay-server
-pwplay-client
-pwplay-player
-pw-server
-pw-client
-pw-player
-play_flac
-simple_tone
-simple_playlist
-webservice
-webservice_v2
-interactive_playlist
-pwclient
-playlist_player
-playlist_interactive
+# Binaries (build outputs at the repo root; anchored so they do not match
+# same-named source files in subdirectories, e.g. contrib/openrc/pwplay-server)
+/pwplay-server
+/pwplay-client
+/pwplay-player
+/pw-server
+/pw-client
+/pw-player
+/play_flac
+/simple_tone
+/simple_playlist
+/webservice
+/webservice_v2
+/interactive_playlist
+/pwclient
+/playlist_player
+/playlist_interactive
 *.exe
 *.dll
 *.so

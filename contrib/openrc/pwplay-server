@@ -1,0 +1,24 @@
+#!/sbin/openrc-run
+
+description="pwplay audio server (HTTP-controlled PipeWire player)"
+
+command="/usr/local/bin/pwplay-server"
+
+supervisor="supervise-daemon"
+pidfile="${XDG_RUNTIME_DIR:-/tmp}/${RC_SVCNAME}.pid"
+
+output_log="${XDG_STATE_HOME:-$HOME/.local/state}/pwplay/${RC_SVCNAME}.log"
+error_log="${XDG_STATE_HOME:-$HOME/.local/state}/pwplay/${RC_SVCNAME}.log"
+
+respawn_delay=5
+respawn_max=0
+
+start_pre() {
+	# XDG_RUNTIME_DIR carries the PipeWire socket; without it playback is
+	# impossible, so fail early with a clear message.
+	if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+		eerror "XDG_RUNTIME_DIR is not set; run ${RC_SVCNAME} from a user runlevel (openrc --user)"
+		return 1
+	fi
+	checkpath --directory --mode 0755 "$(dirname "$output_log")"
+}
