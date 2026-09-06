@@ -38,6 +38,7 @@ Remote-controllable audio server. Starts paused on `:8080`.
 ```bash
 pwplay-server ~/Music/album
 pwplay-server track1.flac http://example.com/music.flac
+pwplay-server   # empty queue; add tracks via POST /add and control via HTTP
 ```
 
 ### Endpoints

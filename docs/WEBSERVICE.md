@@ -23,9 +23,14 @@ REST API for controlling the pwplay audio server.
 pwplay-server ~/Music/album
 pwplay-server ~/Music/jazz ~/Music/classical
 pwplay-server track1.flac track2.mp3 http://example.com/music.flac
+pwplay-server            # empty queue, controlled entirely over HTTP
 ```
 
 Directories are scanned recursively for supported audio files. Files are sorted alphabetically. Server starts on `http://localhost:8080` in a paused state.
+
+With no arguments the server starts with an empty queue and is driven entirely
+via the REST API: enqueue files, directories, or URLs with `POST /add`, then
+use `/play` or `/goto` to start playback.
 
 ### Flags
 
@@ -236,7 +241,7 @@ go build -o pwplay-server ./cmd/server
 ## Notes
 
 - The service starts paused; use `/play` to begin
-- First track determines the audio format (sample rate, channels) for the whole session
+- The audio format (sample rate, channels) for the whole session is set by the first track loaded — the first startup argument, or, when started with an empty queue, the first track added via `/add`
 - HTTP URLs are downloaded to a temp file before playback for reliability and seek support
 - Seek is immediate with no audible gap
 - Directories are scanned recursively for `.flac`, `.mp3`, `.wav`, `.ogg`

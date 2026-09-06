@@ -63,6 +63,7 @@ Start the audio server with files, directories, or URLs:
 pwplay-server ~/Music/album
 pwplay-server track1.flac track2.mp3 ~/Music/jazz/
 pwplay-server http://example.com/music.flac local.ogg
+pwplay-server   # empty queue, controlled entirely over HTTP (POST /add)
 ```
 
 Starts paused on `:8080`. Control via the REST API or the TUI client.

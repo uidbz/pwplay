@@ -112,9 +112,15 @@ type Player struct {
 	removeTrack  chan int
 	stopDecode   chan bool
 	decodeDone   chan bool
-	sampleRate   int
-	channels     int
-	mu           sync.RWMutex
+	// sampleRate/channels are int32 accessed atomically: they are written by
+	// the decoder thread when the first track is loaded (lazy stream creation)
+	// and read by HTTP handlers via Position/Seek/TrackDuration.
+	sampleRate int32
+	channels   int32
+	// streamOpts is retained so the stream can be created lazily on the first
+	// track load when the player is constructed with an empty playlist.
+	streamOpts pipewire.StreamOptions
+	mu         sync.RWMutex
 
 	// Seek support: seekTarget holds the target sample position for a pending
 	// seek, or -1 when no seek is pending. The decoder thread polls this value
@@ -296,24 +302,39 @@ func NewPlayer(files []string, startPaused bool) (*Player, error) {
 	return NewPlayerWithOptions(files, PlayerOptions{StartPaused: startPaused})
 }
 
+// NewPlayerWithOptions creates a player for the given files. files may be
+// empty, in which case the player starts with an empty playlist and the
+// PipeWire stream is created lazily when the first track is loaded (see
+// AddTrack), so the stream adopts that track's native sample rate and channel
+// layout. Until then a default format (44100 Hz, stereo) is reported.
 func NewPlayerWithOptions(files []string, opts PlayerOptions) (*Player, error) {
-	if len(files) == 0 {
-		return nil, fmt.Errorf("empty playlist")
+	var firstFile AudioDecoder
+	sampleRate, channels := 44100, 2 // default until the first track is loaded
+	if len(files) > 0 {
+		var err error
+		firstFile, err = OpenAudioFile(files[0])
+		if err != nil {
+			return nil, err
+		}
+		sampleRate = firstFile.SampleRate()
+		channels = firstFile.Channels()
 	}
 
-	firstFile, err := OpenAudioFile(files[0])
-	if err != nil {
-		return nil, err
-	}
-
-	bufferSize := firstFile.SampleRate() * firstFile.Channels() * 3
+	// Ring capacity only controls buffering depth, not correctness; when
+	// starting empty it is sized for the default format and simply holds a
+	// little more or less than 3s of audio once a real track sets the rate.
+	bufferSize := sampleRate * channels * 3
 
 	p := &Player{
 		ringBuffer:  NewRingBuffer(bufferSize),
 		playlist:    files,
 		currentFile: firstFile,
-		sampleRate:  firstFile.SampleRate(),
-		channels:    firstFile.Channels(),
+		sampleRate:  int32(sampleRate),
+		channels:    int32(channels),
+		streamOpts: pipewire.StreamOptions{
+			Passthrough: opts.Passthrough,
+			Exclusive:   opts.Exclusive,
+		},
 		addTrack:    make(chan string, 10),
 		removeTrack: make(chan int, 10),
 		stopDecode:  make(chan bool),
@@ -324,23 +345,27 @@ func NewPlayerWithOptions(files []string, opts PlayerOptions) (*Player, error) {
 	atomic.StoreInt64(&p.seekTarget, -1)
 	atomic.StoreInt32(&p.gotoTrack, -1)
 	atomic.StoreUint32(&p.volume, math.Float32bits(1.0))
-	// Anchor track 0 at the start of the (empty) ring's output stream.
-	p.resetBoundaries(0, 0, firstFile.Duration())
 
 	if opts.StartPaused {
 		atomic.StoreInt32(&p.paused, 1)
 	}
 
-	format := pipewire.AudioFormat{
-		SampleRate: p.sampleRate,
-		Channels:   p.channels,
+	if firstFile == nil {
+		// Empty playlist: no stream yet. The decoder thread handles add/remove
+		// and creates the stream on the first successful track load.
+		go p.decoderThread()
+		return p, nil
 	}
 
-	streamOpts := pipewire.StreamOptions{
-		Passthrough: opts.Passthrough,
-		Exclusive:   opts.Exclusive,
+	// Anchor track 0 at the start of the (empty) ring's output stream.
+	p.resetBoundaries(0, 0, firstFile.Duration())
+
+	format := pipewire.AudioFormat{
+		SampleRate: sampleRate,
+		Channels:   channels,
 	}
-	pwStream, err := pipewire.NewStreamWithOptions("Audio Player", format, p.processCallback, streamOpts)
+
+	pwStream, err := pipewire.NewStreamWithOptions("Audio Player", format, p.processCallback, p.streamOpts)
 	if err != nil {
 		firstFile.Close()
 		return nil, err
@@ -570,7 +595,7 @@ func (p *Player) decoderThread() {
 
 		// Preload next track when buffer is getting low
 		available := p.ringBuffer.Available()
-		bufferCapacity := p.sampleRate * p.channels * 3
+		bufferCapacity := int(atomic.LoadInt32(&p.sampleRate)) * int(atomic.LoadInt32(&p.channels)) * 3
 		if available < bufferCapacity/2 {
 			p.mu.Lock()
 			currentIdx := int(atomic.LoadInt32(&p.currentTrack))
@@ -643,6 +668,34 @@ func (p *Player) loadTrack(idx int) bool {
 		return false
 	}
 
+	// Lazily create the PipeWire stream on the very first track load so the
+	// stream uses the track's native sample rate and channel layout. This is
+	// what allows the player to start with an empty playlist. The stream
+	// format is fixed from then on (tracks with a different format play at
+	// the wrong speed — a documented limitation).
+	if p.stream == nil {
+		rate, ch := file.SampleRate(), file.Channels()
+		// Publish the format before Connect starts the thread loop: the first
+		// process callback can run immediately after and reads these values.
+		atomic.StoreInt32(&p.sampleRate, int32(rate))
+		atomic.StoreInt32(&p.channels, int32(ch))
+		format := pipewire.AudioFormat{SampleRate: rate, Channels: ch}
+		stream, err := pipewire.NewStreamWithOptions("Audio Player", format, p.processCallback, p.streamOpts)
+		if err != nil {
+			log.Printf("Failed to create stream: %v", err)
+			file.Close()
+			return false
+		}
+		if err := stream.Connect(format); err != nil {
+			log.Printf("Failed to connect stream: %v", err)
+			stream.Destroy()
+			file.Close()
+			return false
+		}
+		p.stream = stream
+		log.Printf("Stream started: %d Hz, %d ch", rate, ch)
+	}
+
 	p.currentFile = file
 	atomic.StoreInt32(&p.currentTrack, int32(idx))
 	// A direct load (next/prev/removal reload) discards queued audio, so clear
@@ -662,7 +715,7 @@ func (p *Player) processCallback(buffer []byte, frames int) int {
 		return frames
 	}
 
-	output := unsafe.Slice((*float32)(unsafe.Pointer(&buffer[0])), frames*p.channels)
+	output := unsafe.Slice((*float32)(unsafe.Pointer(&buffer[0])), frames*int(atomic.LoadInt32(&p.channels)))
 	read := p.ringBuffer.Read(output)
 	// The ring's monotonic read clock (advanced inside Read) is the playback
 	// position; no separate counter is needed.
@@ -860,7 +913,7 @@ func (p *Player) IsPassthrough() bool {
 // The seek is performed asynchronously by the decoder thread for immediate,
 // gap-free playback. The ring buffer is cleared so no stale audio is heard.
 func (p *Player) Seek(seconds float64) {
-	sampleRate := p.sampleRate
+	sampleRate := int(atomic.LoadInt32(&p.sampleRate))
 	if sampleRate <= 0 {
 		return
 	}
@@ -925,7 +978,9 @@ func (p *Player) Playlist() []string {
 // Position returns the current playback position in seconds within the
 // current track.
 func (p *Player) Position() float64 {
-	if p.sampleRate <= 0 || p.channels <= 0 {
+	sampleRate := int(atomic.LoadInt32(&p.sampleRate))
+	channels := int(atomic.LoadInt32(&p.channels))
+	if sampleRate <= 0 || channels <= 0 {
 		return 0
 	}
 	b, consumed, ok := p.activeBoundary()
@@ -937,20 +992,21 @@ func (p *Player) Position() float64 {
 	// after a seek).
 	var perChan int64
 	if consumed > b.writeOffset {
-		perChan = int64(consumed-b.writeOffset) / int64(p.channels)
+		perChan = int64(consumed-b.writeOffset) / int64(channels)
 	}
 	pos := b.startSample + perChan
-	return float64(pos) / float64(p.sampleRate)
+	return float64(pos) / float64(sampleRate)
 }
 
 // TrackDuration returns the total duration of the current track in seconds,
 // or -1 if unknown.
 func (p *Player) TrackDuration() float64 {
+	sampleRate := int(atomic.LoadInt32(&p.sampleRate))
 	b, _, ok := p.activeBoundary()
-	if !ok || b.duration <= 0 || p.sampleRate <= 0 {
+	if !ok || b.duration <= 0 || sampleRate <= 0 {
 		return -1
 	}
-	return float64(b.duration) / float64(p.sampleRate)
+	return float64(b.duration) / float64(sampleRate)
 }
 
 // CurrentTrackMetadata returns metadata for the current track

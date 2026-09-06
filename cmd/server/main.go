@@ -19,24 +19,27 @@ func main() {
 	passthrough := flag.Bool("passthrough", false, "Disable software volume, prevent resampling and channel remixing")
 	exclusive := flag.Bool("exclusive", false, "Request exclusive access to the audio device (use with -passthrough)")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <file-or-directory> [file-or-directory] ...\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s [flags] [file-or-directory] ...\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Supported formats: FLAC, MP3, WAV, OGG\n")
-		fmt.Fprintf(os.Stderr, "Directories are scanned recursively for audio files.\n\n")
+		fmt.Fprintf(os.Stderr, "Directories are scanned recursively for audio files.\n")
+		fmt.Fprintf(os.Stderr, "With no files given, the server starts with an empty queue and is\n")
+		fmt.Fprintf(os.Stderr, "controlled entirely over HTTP (add tracks with POST /add).\n\n")
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
 
-	paths := flag.Args()
-	if len(paths) == 0 {
-		flag.Usage()
-		os.Exit(1)
-	}
-
-	// Expand directories into audio files
-	files, err := player.ExpandPlaylist(paths)
-	if err != nil {
-		log.Fatalf("Failed to build playlist: %v", err)
+	// Expand directories into audio files. No arguments means an empty
+	// starting queue; tracks are added later via the /add endpoint.
+	var files []string
+	if paths := flag.Args(); len(paths) > 0 {
+		var err error
+		files, err = player.ExpandPlaylist(paths)
+		if err != nil {
+			log.Fatalf("Failed to build playlist: %v", err)
+		}
+	} else {
+		log.Println("No files given: starting with an empty queue (add tracks via POST /add)")
 	}
 
 	if err := pipewire.Init(); err != nil {
@@ -49,6 +52,7 @@ func main() {
 		Passthrough: *passthrough,
 		Exclusive:   *exclusive,
 	}
+	var err error
 	p, err = player.NewPlayerWithOptions(files, opts)
 	if err != nil {
 		log.Fatal(err)
@@ -137,13 +141,18 @@ func main() {
 		file := p.CurrentFile()
 		playlist := p.Playlist()
 
+		base := ""
+		if file != "" {
+			base = filepath.Base(file)
+		}
+
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"playing":       p.IsPlaying(),
 			"paused":        p.IsPaused(),
 			"stopped":       p.IsStopped(),
 			"passthrough":   p.IsPassthrough(),
 			"currentTrack":  idx,
-			"currentFile":   filepath.Base(file),
+			"currentFile":   base,
 			"playlist":      playlist,
 			"totalTracks":   len(playlist),
 			"position":      p.Position(),
