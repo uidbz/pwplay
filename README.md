@@ -53,6 +53,15 @@ make build
 
 Produces: `pwplay-server`, `pwplay-client`, `pwplay-player`
 
+To run `pwplay-server` as a per-user service (systemd or OpenRC) controlled
+over HTTP:
+
+```bash
+sudo make install
+```
+
+See [contrib/README.md](contrib/README.md).
+
 ## Usage
 
 ### Server

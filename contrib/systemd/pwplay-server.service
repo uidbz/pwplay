@@ -1,0 +1,29 @@
+[Unit]
+Description=pwplay audio server (HTTP-controlled PipeWire player)
+Documentation=https://github.com/uidbz/pwplay
+# PipeWire socket-activation orders the daemon ahead of clients.
+After=pipewire.service pipewire-pulse.service
+Wants=pipewire.service
+
+[Service]
+Type=simple
+# No file/dir arguments: starts with an empty queue and is driven entirely
+# over HTTP (POST /add) on 127.0.0.1:8080.
+ExecStart=/usr/local/bin/pwplay-server
+Restart=on-failure
+RestartSec=5s
+
+# Hardening. Audio playback and /add of local files need: the PipeWire socket
+# (PrivateDevices would hide /dev but PipeWire goes over $XDG_RUNTIME_DIR),
+# read access to the user's media (ProtectHome off), and temp files for HTTP
+# downloads (PrivateTmp off, since OpenAudioFile uses os.CreateTemp).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+
+[Install]
+WantedBy=default.target

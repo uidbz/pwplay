@@ -1,4 +1,4 @@
-.PHONY: all build clean test install-deps
+.PHONY: all build clean test install install-deps
 
 all: build
 
@@ -8,6 +8,13 @@ build:
 	@go build -o pwplay-client ./cmd/client
 	@go build -o pwplay-player ./cmd/player
 	@echo "Build complete: pwplay-server, pwplay-client, pwplay-player"
+
+# Install pwplay-server as a per-user service (systemd --user or OpenRC user
+# runlevel) and the binary to /usr/local/bin. Run the binary install as root:
+#   sudo make install
+# See contrib/install.sh and contrib/README.md.
+install:
+	./contrib/install.sh
 
 clean:
 	@echo "Cleaning..."

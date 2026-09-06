@@ -65,6 +65,18 @@ Note: depending on your toolchain, cgo may reject PipeWire's
 export CGO_CFLAGS_ALLOW='-fno-strict-overflow'
 ```
 
+## Installing as a Service
+
+To run `pwplay-server` on login/boot as a per-user service (systemd or
+OpenRC), controlled over HTTP:
+
+```bash
+sudo make install
+```
+
+See [contrib/README.md](../contrib/README.md) for details.
+
+
 ## Running the Example
 
 1. Find a FLAC file or download a sample:
