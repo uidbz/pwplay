@@ -46,6 +46,8 @@ func detectAudioFormat(path string) string {
 		return "WAV"
 	case "ogg":
 		return "OGG"
+	case "opus":
+		return "OPUS"
 	case "m4a", "m4b", "m4p", "alac":
 		return "M4A"
 	case "mp4":

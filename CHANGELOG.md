@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### Opus Playback Support
+
+Added Opus (Ogg Opus, RFC 7845) decoding via the pure-Go
+[github.com/pion/opus](https://github.com/pion/opus) library (with its
+bundled `pkg/oggreader` for the Ogg container).
+
+#### Features
+- `.opus` extension support for local files and HTTP/HTTPS URLs
+- `.ogg` files are content-sniffed (OpusHead vs. Vorbis ID header), so
+  Opus content with a `.ogg` extension plays correctly
+- Always decoded at 48 kHz (Opus's native rate), mono and stereo
+  (channel mapping family 0)
+- Sample-exact duration and gapless transitions: encoder pre-skip and
+  final-page padding are discarded using the OpusHead pre-skip field and
+  the last page's granule position
+- Seek support (decode-forward from the nearest packet boundary)
+- OpusTags metadata works out of the box (via dhowden/tag)
+
+#### Changes
+- `go.mod` now requires Go 1.24 (pion/opus's minimum)
+
 ## v2.2.0 - 2026-03-13
 
 ### Directory Playback Support

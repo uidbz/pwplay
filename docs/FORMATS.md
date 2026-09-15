@@ -10,6 +10,7 @@ The player supports multiple audio formats through a unified decoder interface.
 | MP3 | .mp3 | Yes | Lossy |
 | WAV | .wav | Yes | Uncompressed PCM |
 | OGG Vorbis | .ogg | Yes | Lossy, variable bitrate |
+| Opus | .opus, .ogg | Yes | Lossy, always decoded at 48 kHz |
 
 All formats support seeking and work over HTTP/HTTPS. URLs are downloaded
 to a temporary file before playback, so even WAV (which requires a seekable
@@ -42,11 +43,22 @@ file) can be streamed.
 - **Channels**: Mono, stereo, multi-channel
 - **Quality**: Lossy, typically higher quality than MP3 at the same bitrate
 
+### Opus (Ogg Opus, RFC 7845)
+- **Sample rates**: Always decoded at 48 kHz (Opus's native rate; the input
+  sample rate in the OpusHead header is informational only)
+- **Channels**: Mono, stereo (channel mapping family 0). Multistream and
+  multichannel files (mapping families 1/255, >2 channels) are not supported
+- **Container**: Ogg. Both `.opus` and `.ogg` extensions work; `.ogg` files
+  are content-sniffed to distinguish Opus from Vorbis
+- **Pre-skip / end-trim**: The encoder delay (pre-skip) and final-page
+  padding are discarded, so duration and gapless transitions are sample-exact
+- **Quality**: Lossy, typically higher quality than Vorbis at low bitrates
+
 ## Usage
 
 ```bash
 # Mixed format playlist
-pwplay-player song1.flac song2.mp3 song3.wav song4.ogg
+pwplay-player song1.flac song2.mp3 song3.wav song4.ogg song5.opus
 
 # From URLs (all formats work over HTTP)
 pwplay-server http://example.com/track.mp3 local.flac http://example.com/song.wav
@@ -56,8 +68,9 @@ pwplay-server http://example.com/track.mp3 local.flac http://example.com/song.wa
 
 Formats are detected by:
 
-1. **File extension** (`.flac`, `.mp3`, `.wav`, `.ogg`, case-insensitive)
+1. **File extension** (`.flac`, `.mp3`, `.wav`, `.ogg`, `.opus`, case-insensitive)
 2. **Content-Type header** for HTTP URLs without a usable extension
+3. **Content sniffing** for `.ogg` files (OpusHead vs. Vorbis ID header)
 
 All decoders convert samples to float32 internally, which is PipeWire's
 native format. Integer-to-float conversion is lossless for 16 and 24-bit
@@ -70,13 +83,14 @@ dynamic range).
 - **MP3**: github.com/hajimehoshi/go-mp3
 - **WAV**: github.com/go-audio/wav
 - **OGG**: github.com/jfreymuth/oggvorbis
+- **Opus**: github.com/pion/opus (with github.com/pion/opus/pkg/oggreader)
 
 ## Gapless Playback
 
 Gapless transitions work across all format combinations:
 
 ```
-FLAC → MP3 → WAV → OGG (seamless)
+FLAC → MP3 → WAV → OGG → OPUS (seamless)
 ```
 
 The next track is preloaded while the current one plays. All tracks in a

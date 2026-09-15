@@ -229,6 +229,7 @@ func ExpandPlaylist(paths []string) ([]string, error) {
 		".mp3":  true,
 		".wav":  true,
 		".ogg":  true,
+		".opus": true,
 	}
 
 	for _, path := range paths {

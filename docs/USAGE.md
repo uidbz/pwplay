@@ -88,7 +88,7 @@ See [CLIENT.md](CLIENT.md) for the key reference.
 ## Directory Playback
 
 All applications accept directories, which are scanned recursively for
-`.flac`, `.mp3`, `.wav`, and `.ogg` files (case-insensitive). Files are
+`.flac`, `.mp3`, `.wav`, `.ogg`, and `.opus` files (case-insensitive). Files are
 sorted alphabetically; non-audio files are ignored. Files and directories
 can be mixed freely:
 
@@ -134,7 +134,7 @@ ssh music-server "curl -X POST http://localhost:8080/play"
 ## Troubleshooting
 
 **"No audio files found"** — the directory contains no supported audio
-files. Verify extensions are `.flac`, `.mp3`, `.wav`, or `.ogg`.
+files. Verify extensions are `.flac`, `.mp3`, `.wav`, `.ogg`, or `.opus`.
 
 **No audio output** — check that PipeWire is running:
 

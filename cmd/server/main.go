@@ -20,7 +20,7 @@ func main() {
 	exclusive := flag.Bool("exclusive", false, "Request exclusive access to the audio device (use with -passthrough)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] [file-or-directory] ...\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "Supported formats: FLAC, MP3, WAV, OGG\n")
+		fmt.Fprintf(os.Stderr, "Supported formats: FLAC, MP3, WAV, OGG, OPUS\n")
 		fmt.Fprintf(os.Stderr, "Directories are scanned recursively for audio files.\n")
 		fmt.Fprintf(os.Stderr, "With no files given, the server starts with an empty queue and is\n")
 		fmt.Fprintf(os.Stderr, "controlled entirely over HTTP (add tracks with POST /add).\n\n")

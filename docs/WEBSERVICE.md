@@ -13,7 +13,7 @@ REST API for controlling the pwplay audio server.
 - Directory scanning (recursive)
 - HTTP URL playback
 - Gapless playback
-- Multi-format: FLAC, MP3, WAV, OGG
+- Multi-format: FLAC, MP3, WAV, OGG, OPUS
 - Passthrough mode (no resampling, no remixing, no software volume)
 - Optional exclusive device access
 
@@ -244,5 +244,5 @@ go build -o pwplay-server ./cmd/server
 - The audio format (sample rate, channels) for the whole session is set by the first track loaded — the first startup argument, or, when started with an empty queue, the first track added via `/add`
 - HTTP URLs are downloaded to a temp file before playback for reliability and seek support
 - Seek is immediate with no audible gap
-- Directories are scanned recursively for `.flac`, `.mp3`, `.wav`, `.ogg`
+- Directories are scanned recursively for `.flac`, `.mp3`, `.wav`, `.ogg`, `.opus`
 - In passthrough mode, `/volume` is a no-op (gain fixed at 1.0)

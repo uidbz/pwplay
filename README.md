@@ -4,7 +4,7 @@ Audio player for Linux built on PipeWire, written in Go.
 
 ## Features
 
-- Multi-format: FLAC, MP3, WAV, OGG Vorbis
+- Multi-format: FLAC, MP3, WAV, OGG Vorbis, Opus
 - Gapless playback with next-track preloading
 - Seek support (all formats)
 - Software volume control
@@ -32,7 +32,7 @@ examples/       Standalone demo programs
 
 ## Prerequisites
 
-PipeWire development libraries and Go 1.22+.
+PipeWire development libraries and Go 1.24+.
 
 ```bash
 # Ubuntu/Debian

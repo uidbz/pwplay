@@ -1,6 +1,6 @@
 module github.com/uidbz/pwplay
 
-go 1.22
+go 1.24.0
 
 require (
 	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
@@ -8,6 +8,7 @@ require (
 	github.com/hajimehoshi/go-mp3 v0.3.4
 	github.com/jfreymuth/oggvorbis v1.0.5
 	github.com/mewkiz/flac v1.0.10
+	github.com/pion/opus v0.1.0
 )
 
 require (

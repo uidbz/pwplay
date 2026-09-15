@@ -44,10 +44,10 @@ func TestExpandPlaylistDirectory(t *testing.T) {
 
 	// Create audio files
 	audioFiles := map[string]string{
-		filepath.Join(tmpDir, "a.flac"):    "test",
-		filepath.Join(tmpDir, "b.mp3"):     "test",
-		filepath.Join(subDir, "c.wav"):     "test",
-		filepath.Join(subDir, "d.ogg"):     "test",
+		filepath.Join(tmpDir, "a.flac"): "test",
+		filepath.Join(tmpDir, "b.mp3"):  "test",
+		filepath.Join(subDir, "c.wav"):  "test",
+		filepath.Join(subDir, "d.ogg"):  "test",
 	}
 
 	// Create non-audio file (should be ignored)
@@ -140,7 +140,7 @@ func TestExpandPlaylistUnsupportedFormat(t *testing.T) {
 func TestExpandPlaylistSupportedFormats(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	formats := []string{".flac", ".mp3", ".wav", ".ogg", ".FLAC", ".MP3"}
+	formats := []string{".flac", ".mp3", ".wav", ".ogg", ".opus", ".FLAC", ".MP3"}
 
 	for _, ext := range formats {
 		filename := filepath.Join(tmpDir, "test"+ext)
@@ -155,7 +155,7 @@ func TestExpandPlaylistSupportedFormats(t *testing.T) {
 	}
 
 	// Should find all files (case-insensitive)
-	if len(result) != 6 {
-		t.Errorf("Expected 6 files, got %d", len(result))
+	if len(result) != 7 {
+		t.Errorf("Expected 7 files, got %d", len(result))
 	}
 }

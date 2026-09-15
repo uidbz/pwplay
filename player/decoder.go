@@ -1,6 +1,8 @@
 package player
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
@@ -13,6 +15,8 @@ import (
 	"github.com/hajimehoshi/go-mp3"
 	"github.com/jfreymuth/oggvorbis"
 	"github.com/mewkiz/flac"
+	"github.com/pion/opus"
+	"github.com/pion/opus/pkg/oggreader"
 )
 
 // AudioDecoder provides a unified interface for all audio formats
@@ -389,6 +393,342 @@ func (d *OGGDecoder) ReadSamples(buf []float32) (int, error) {
 	return n, err
 }
 
+// OPUSDecoder decodes Ogg Opus (RFC 7845) files using pion/opus.
+//
+// Opus always decodes at 48 kHz, so SampleRate is 48000 regardless of the
+// input sample rate recorded in the OpusHead header (that field is
+// informational only). Only channel mapping family 0 (mono/stereo) is
+// supported; the pion decoder cannot handle multistream/multichannel files.
+type OPUSDecoder struct {
+	rs       io.ReadSeeker
+	closer   io.Closer
+	ogg      *oggreader.OggReader
+	decoder  opus.Decoder
+	channels int
+	preSkip  int64 // per-channel encoder-delay samples to discard at start
+	skipLeft int64 // pre-skip samples still to discard
+	position int64 // per-channel samples emitted (post pre-skip)
+	duration int64 // total per-channel samples (post pre-skip), -1 if unknown
+	pcmBuf   []float32
+	pcm      []float32 // pending decoded samples (slice of pcmBuf)
+	eof      bool
+}
+
+// opusSampleRate is the rate Opus decodes to natively.
+const opusSampleRate = 48000
+
+// maxOpusPacketSamples is the maximum per-channel samples in one Opus
+// packet (120 ms at 48 kHz, per RFC 6716).
+const maxOpusPacketSamples = 5760
+
+func newOPUSDecoder(r io.ReadCloser) (*OPUSDecoder, error) {
+	// Seeking requires re-reading the stream from the start, and duration
+	// detection scans the file tail, so a seekable reader is needed. All
+	// inputs are files (local or downloaded temp files), so this always holds.
+	rs, ok := r.(io.ReadSeeker)
+	if !ok {
+		r.Close()
+		return nil, fmt.Errorf("OPUS requires a seekable reader")
+	}
+
+	// Read the last page's granule position for the duration before the
+	// oggreader consumes the stream from the start.
+	lastGranule, _ := oggLastGranule(rs)
+	if _, err := rs.Seek(0, io.SeekStart); err != nil {
+		r.Close()
+		return nil, err
+	}
+
+	ogg, header, err := oggreader.NewWith(rs)
+	if err != nil {
+		r.Close()
+		return nil, fmt.Errorf("failed to parse Opus header: %w", err)
+	}
+
+	if header.ChannelMap != 0 {
+		r.Close()
+		return nil, fmt.Errorf("unsupported Opus channel mapping family %d (only family 0 mono/stereo)", header.ChannelMap)
+	}
+	channels := int(header.Channels)
+	if channels < 1 || channels > 2 {
+		r.Close()
+		return nil, fmt.Errorf("unsupported Opus channel count %d (only mono/stereo)", channels)
+	}
+
+	// RFC 7845: the second packet is the OpusTags comment header; skip it.
+	if err := skipOpusTags(ogg); err != nil {
+		r.Close()
+		return nil, err
+	}
+
+	dec, err := opus.NewDecoderWithOutput(opusSampleRate, channels)
+	if err != nil {
+		r.Close()
+		return nil, fmt.Errorf("failed to create Opus decoder: %w", err)
+	}
+
+	// Granule positions count from the stream start including the pre-skip,
+	// so the playable duration is the final granule minus the pre-skip.
+	duration := int64(-1)
+	if lastGranule >= 0 {
+		duration = lastGranule - int64(header.PreSkip)
+		if duration < 0 {
+			duration = 0
+		}
+	}
+
+	return &OPUSDecoder{
+		rs:       rs,
+		closer:   r,
+		ogg:      ogg,
+		decoder:  dec,
+		channels: channels,
+		preSkip:  int64(header.PreSkip),
+		skipLeft: int64(header.PreSkip),
+		duration: duration,
+		pcmBuf:   make([]float32, maxOpusPacketSamples*channels),
+	}, nil
+}
+
+// skipOpusTags consumes the OpusTags comment header packet that must follow
+// the ID header in every Ogg Opus stream.
+func skipOpusTags(ogg *oggreader.OggReader) error {
+	pkt, _, err := ogg.ParseNextPacket()
+	if err != nil {
+		return fmt.Errorf("failed to read Opus comment header: %w", err)
+	}
+	if !bytes.HasPrefix(pkt, []byte("OpusTags")) {
+		return fmt.Errorf("missing OpusTags comment header")
+	}
+	return nil
+}
+
+// oggLastGranule returns the granule position of the last Ogg page in the
+// stream, or -1 if it cannot be determined. The stream position is not
+// preserved; callers must re-seek before further reads.
+func oggLastGranule(rs io.ReadSeeker) (int64, error) {
+	const tailSize = 128 * 1024 // larger than the max Ogg page size (~65 KB)
+	end, err := rs.Seek(0, io.SeekEnd)
+	if err != nil {
+		return -1, err
+	}
+	start := end - tailSize
+	if start < 0 {
+		start = 0
+	}
+	if _, err := rs.Seek(start, io.SeekStart); err != nil {
+		return -1, err
+	}
+	tail := make([]byte, end-start)
+	if _, err := io.ReadFull(rs, tail); err != nil {
+		return -1, err
+	}
+
+	// Scan backwards for the last well-formed page: "OggS" + version 0, whose
+	// declared length lands exactly on EOF or on another "OggS" signature
+	// (guards against false positives inside page payload data).
+	for i := len(tail) - 27; i >= 0; i-- {
+		if !bytes.Equal(tail[i:i+4], []byte("OggS")) || tail[i+4] != 0 {
+			continue
+		}
+		nsegs := int(tail[i+26])
+		if i+27+nsegs > len(tail) {
+			continue
+		}
+		pageLen := 27 + nsegs
+		for j := 0; j < nsegs; j++ {
+			pageLen += int(tail[i+27+j])
+		}
+		pageEnd := i + pageLen
+		if pageEnd > len(tail) {
+			continue
+		}
+		if pageEnd < len(tail) && !bytes.Equal(tail[pageEnd:pageEnd+4], []byte("OggS")) {
+			continue
+		}
+		// Granule position is a little-endian uint64 at header offset 6.
+		return int64(binary.LittleEndian.Uint64(tail[i+6 : i+14])), nil
+	}
+	return -1, fmt.Errorf("no Ogg page found")
+}
+
+func (d *OPUSDecoder) SampleRate() int    { return opusSampleRate }
+func (d *OPUSDecoder) Channels() int      { return d.channels }
+func (d *OPUSDecoder) BitsPerSample() int { return 16 }
+func (d *OPUSDecoder) Close() error       { return d.closer.Close() }
+func (d *OPUSDecoder) Position() int64    { return d.position }
+func (d *OPUSDecoder) Duration() int64    { return d.duration }
+
+func (d *OPUSDecoder) Seek(samplePos int64) error {
+	if samplePos < 0 {
+		samplePos = 0
+	}
+	if d.duration > 0 && samplePos >= d.duration {
+		samplePos = d.duration - 1
+	}
+
+	// Opus packets are stateful, so a seek decodes forward from a packet
+	// boundary: rewind to the start when the target is behind the current
+	// position, then decode-and-discard up to the target.
+	if samplePos < d.position {
+		if err := d.rewind(); err != nil {
+			return err
+		}
+	}
+	discard := samplePos - d.position
+	scratch := make([]float32, 8192*d.channels)
+	for discard > 0 {
+		chunk := int64(len(scratch) / d.channels)
+		if chunk > discard {
+			chunk = discard
+		}
+		n, err := d.ReadSamples(scratch[:chunk*int64(d.channels)])
+		discard -= int64(n / d.channels)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("OPUS seek failed: %w", err)
+		}
+		if n == 0 {
+			break
+		}
+	}
+	return nil
+}
+
+// rewind returns the decoder to the start of the stream.
+func (d *OPUSDecoder) rewind() error {
+	if _, err := d.rs.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("OPUS seek failed: %w", err)
+	}
+	ogg, _, err := oggreader.NewWith(d.rs)
+	if err != nil {
+		return fmt.Errorf("OPUS seek failed: %w", err)
+	}
+	if err := skipOpusTags(ogg); err != nil {
+		return fmt.Errorf("OPUS seek failed: %w", err)
+	}
+	if err := d.decoder.Init(opusSampleRate, d.channels); err != nil {
+		return fmt.Errorf("OPUS seek failed: %w", err)
+	}
+	d.ogg = ogg
+	d.pcm = nil
+	d.skipLeft = d.preSkip
+	d.position = 0
+	d.eof = false
+	return nil
+}
+
+func (d *OPUSDecoder) ReadSamples(buf []float32) (int, error) {
+	samplesRead := 0
+	for samplesRead < len(buf) {
+		if len(d.pcm) > 0 {
+			n := copy(buf[samplesRead:], d.pcm)
+			d.pcm = d.pcm[n:]
+			samplesRead += n
+			// Track position: n interleaved samples = n/channels per-channel samples
+			d.position += int64(n / d.channels)
+			continue
+		}
+		if d.eof {
+			if samplesRead > 0 {
+				return samplesRead, nil
+			}
+			return 0, io.EOF
+		}
+		if err := d.decodeNextPacket(); err != nil {
+			if err == io.EOF {
+				d.eof = true
+				continue
+			}
+			if samplesRead > 0 {
+				return samplesRead, nil
+			}
+			return 0, err
+		}
+	}
+	return samplesRead, nil
+}
+
+// decodeNextPacket decodes the next Opus packet into d.pcm, applying the
+// initial pre-skip discard and the end-of-stream duration trim.
+func (d *OPUSDecoder) decodeNextPacket() error {
+	pkt, _, err := d.ogg.ParseNextPacket()
+	if err != nil {
+		return err // io.EOF at the end of the stream
+	}
+	n, err := d.decoder.DecodeToFloat32(pkt, d.pcmBuf)
+	if err != nil {
+		return fmt.Errorf("Opus decode failed: %w", err)
+	}
+	d.pcm = d.pcmBuf[:n*d.channels]
+
+	// Discard the encoder delay (pre-skip) once, at the start of the stream.
+	if d.skipLeft > 0 {
+		skip := int(d.skipLeft) * d.channels
+		if skip >= len(d.pcm) {
+			d.skipLeft -= int64(n)
+			d.pcm = nil
+			return nil
+		}
+		d.pcm = d.pcm[skip:]
+		d.skipLeft = 0
+	}
+
+	// End-trim: the final page's granule can indicate fewer samples than the
+	// packets decode to; never emit past the stream's total duration.
+	if d.duration >= 0 {
+		remaining := (d.duration - d.position) * int64(d.channels)
+		if remaining <= 0 {
+			d.pcm = nil
+			d.eof = true
+			return nil
+		}
+		if int64(len(d.pcm)) > remaining {
+			d.pcm = d.pcm[:remaining]
+		}
+	}
+	return nil
+}
+
+// sniffOggCodec peeks at the first Ogg page's first packet to identify the
+// codec: "opus" for OpusHead, "vorbis" for a Vorbis ID header, "" if
+// undetermined. The stream position is restored before returning.
+func sniffOggCodec(r io.ReadCloser) string {
+	rs, ok := r.(io.ReadSeeker)
+	if !ok {
+		return ""
+	}
+	defer rs.Seek(0, io.SeekStart)
+
+	header := make([]byte, 27)
+	if _, err := io.ReadFull(rs, header); err != nil {
+		return ""
+	}
+	if !bytes.Equal(header[:4], []byte("OggS")) {
+		return ""
+	}
+	nsegs := int(header[26])
+	segments := make([]byte, nsegs)
+	if _, err := io.ReadFull(rs, segments); err != nil {
+		return ""
+	}
+	// The codec signature sits at the start of the first packet, which the
+	// first segment always contains in full for both ID headers.
+	payload := make([]byte, segments[0])
+	if _, err := io.ReadFull(rs, payload); err != nil {
+		return ""
+	}
+	switch {
+	case bytes.HasPrefix(payload, []byte("OpusHead")):
+		return "opus"
+	case bytes.HasPrefix(payload, []byte("\x01vorbis")):
+		return "vorbis"
+	}
+	return ""
+}
+
 // downloadToTempFile fetches a URL and writes the contents to a temporary file.
 // The returned file is open and seeked to the beginning. The caller must close
 // and remove the file when done.
@@ -413,6 +753,8 @@ func downloadToTempFile(url string) (*os.File, string, error) {
 			ext = ".mp3"
 		case strings.Contains(ct, "wav"), strings.Contains(ct, "wave"):
 			ext = ".wav"
+		case strings.Contains(ct, "opus"):
+			ext = ".opus"
 		case strings.Contains(ct, "ogg"), strings.Contains(ct, "vorbis"):
 			ext = ".ogg"
 		}
@@ -515,11 +857,19 @@ func openByExtension(ext string, r io.ReadCloser, path string) (AudioDecoder, er
 		return newWAVDecoder(r)
 
 	case ".ogg":
+		// The Ogg container carries both Vorbis and Opus; sniff the first
+		// packet to pick the right decoder.
+		if sniffOggCodec(r) == "opus" {
+			return newOPUSDecoder(r)
+		}
 		return newOGGDecoder(r)
+
+	case ".opus":
+		return newOPUSDecoder(r)
 
 	default:
 		r.Close()
-		return nil, fmt.Errorf("unsupported format: %s (supported: .flac, .mp3, .wav, .ogg)", ext)
+		return nil, fmt.Errorf("unsupported format: %s (supported: .flac, .mp3, .wav, .ogg, .opus)", ext)
 	}
 }
 
@@ -534,6 +884,9 @@ func openByContentType(contentType string, r io.ReadCloser, path string) (AudioD
 	}
 	if strings.Contains(ct, "wav") || strings.Contains(ct, "wave") {
 		return openByExtension(".wav", r, path)
+	}
+	if strings.Contains(ct, "opus") {
+		return openByExtension(".opus", r, path)
 	}
 	if strings.Contains(ct, "ogg") || strings.Contains(ct, "vorbis") {
 		return openByExtension(".ogg", r, path)
