@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Pluggable Audio Sinks (Android support)
+
+The `player` package's audio output is no longer hard-wired to PipeWire:
+`PlayerOptions.Sink` accepts a `SinkFactory`, and nil selects the platform
+default — PipeWire on Linux (unchanged behavior), OpenSL ES on Android. This
+lets embedders (e.g. tie-audio) run the full engine — queue, gapless, seek,
+volume, all decoders — on Android, where the pure-Go decoder stack compiles
+unchanged and only the sink differs.
+
+#### Changes
+- New `player.Sink` interface (`Connect(Format)` / `Destroy()`), plus
+  `Format`, `SinkOptions`, `ProcessCallback`, `SinkFactory` types
+- `Player.PlayerOptions` gains a `Sink SinkFactory` field (test seam:
+  a fake sink can drive the audio callback without a sound device)
+- The PipeWire stream is created lazily through the factory, at the first
+  track's native format, as before
+- `pipewire` package files are now `//go:build linux && !android`
+- Fixed `ClearTracks` (and remove-to-empty) leaving stale track boundaries
+  behind: `CurrentTrack()` could report an index into the old playlist
+  for an empty queue
+
 ### Opus Playback Support
 
 Added Opus (Ogg Opus, RFC 7845) decoding via the pure-Go
