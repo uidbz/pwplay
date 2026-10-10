@@ -24,9 +24,11 @@ type SinkOptions struct {
 type ProcessCallback func(buffer []byte, frames int) int
 
 // Sink is an audio output the player pushes decoded PCM into. A sink is
-// created with a callback and started with Connect; the stream format is
-// fixed for the sink's lifetime (the player creates the sink lazily on the
-// first track load, so the sink adopts that track's format).
+// created with a callback and started with Connect; its format is fixed for
+// the sink's lifetime. The player creates the sink lazily on the first track
+// load and, when a later track has a different sample rate or channel count,
+// destroys it and creates a new one at that format. Destroy must not return
+// while the callback may still run.
 type Sink interface {
 	// Connect starts the audio stream at the given format.
 	Connect(format Format) error

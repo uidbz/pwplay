@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Per-track output format (no more wrong-speed playback)
+
+The output stream used to keep the first track's sample rate and channel
+count for the whole session, so any later track in another format played at
+the wrong speed (96 kHz after 44.1 kHz: ~2× slow; mono after stereo: 2×
+fast; Opus/48 kHz after 44.1 kHz: 9 % fast).
+
+#### Changes
+- The sink is reopened whenever the format changes: on a gapless advance
+  after the previous track's buffered tail has played out (a short gap, only
+  at a format change), on next/previous/goto immediately
+- Track boundaries carry their track's format; `Position`, `TrackDuration`
+  and `Seek` use the track's own rate instead of the sink's
+- `RingBuffer.Resize`; the ring is resized to ~3 s of each new format
+
+### Decoder loop no longer hangs while paused
+
+With playback paused the ring stays full, and the decoder retried its
+full-ring write forever without looking at commands. `Close` then never
+returned (tie-audio froze on window close, and Ctrl+C could not end it),
+`AddTrack`/`RemoveTrack`/`ClearTracks` blocked once their small channel
+buffers filled, and `Goto`/`Next`/`Previous`/`Stop` waited for playback to
+resume. Decoded samples that do not fit are now kept for the next loop pass,
+so every command is served promptly in every state, with no audio dropped
+or duplicated.
+
+### WAV decoding fixes
+- Playback started with the 8-byte `data` chunk header decoded as audio (a
+  click); decoding now starts at the first PCM sample
+- Seeks were offset by the header length (misaligned for 24-bit files)
+- Reads stopped at the file end rather than the data chunk's end, so
+  trailing metadata chunks (`LIST`, `id3`) played as noise
+- Duration is taken from the data chunk size
+
 ### Pluggable Audio Sinks (Android support)
 
 The `player` package's audio output is no longer hard-wired to PipeWire:

@@ -222,6 +222,8 @@ type WAVDecoder struct {
 	buffer     []byte
 	position   int64 // current position in per-channel samples
 	duration   int64 // total per-channel samples
+	dataStart  int64 // file offset of the first PCM byte
+	dataEnd    int64 // file offset just past the PCM data chunk
 }
 
 func newWAVDecoder(r io.ReadCloser) (*WAVDecoder, error) {
@@ -238,20 +240,40 @@ func newWAVDecoder(r io.ReadCloser) (*WAVDecoder, error) {
 		return nil, fmt.Errorf("invalid WAV file")
 	}
 
-	dur, err := decoder.Duration()
+	// Position the file at the first PCM byte. IsValidFile only parses the
+	// fmt chunk, leaving the file at the data chunk's header — which was then
+	// played as audio (a click), and seeks were taken from the file start.
+	if err := decoder.FwdToPCM(); err != nil || decoder.PCMChunk == nil {
+		file.Close()
+		return nil, fmt.Errorf("WAV: no PCM data chunk: %v", err)
+	}
+	dataStart, err := file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		file.Close()
+		return nil, fmt.Errorf("WAV: %w", err)
+	}
+	dataEnd := dataStart + int64(decoder.PCMSize)
+	if st, err := file.Stat(); err == nil && st.Size() < dataEnd {
+		dataEnd = st.Size() // truncated file
+	}
+
+	channels := int(decoder.NumChans)
+	bits := int(decoder.BitDepth)
 	var duration int64 = -1
-	if err == nil {
-		duration = int64(dur.Seconds() * float64(decoder.SampleRate))
+	if frameBytes := int64(channels * bits / 8); frameBytes > 0 {
+		duration = (dataEnd - dataStart) / frameBytes
 	}
 
 	return &WAVDecoder{
 		file:       file,
 		decoder:    decoder,
 		sampleRate: int(decoder.SampleRate),
-		channels:   int(decoder.NumChans),
-		bits:       int(decoder.BitDepth),
+		channels:   channels,
+		bits:       bits,
 		buffer:     make([]byte, 8192),
 		duration:   duration,
+		dataStart:  dataStart,
+		dataEnd:    dataEnd,
 	}, nil
 }
 
@@ -271,8 +293,8 @@ func (d *WAVDecoder) Seek(samplePos int64) error {
 	}
 	// WAV seek is byte-based relative to PCM data start
 	bytesPerSample := int64(d.bits / 8)
-	byteOffset := samplePos * int64(d.channels) * bytesPerSample
-	_, err := d.decoder.Seek(byteOffset, io.SeekStart)
+	byteOffset := d.dataStart + samplePos*int64(d.channels)*bytesPerSample
+	_, err := d.file.Seek(byteOffset, io.SeekStart)
 	if err != nil {
 		return fmt.Errorf("WAV seek failed: %w", err)
 	}
@@ -283,15 +305,35 @@ func (d *WAVDecoder) Seek(samplePos int64) error {
 func (d *WAVDecoder) ReadSamples(buf []float32) (int, error) {
 	// Read raw PCM data directly
 	bytesPerSample := d.bits / 8
-	bytesNeeded := len(buf) * bytesPerSample
+	if bytesPerSample <= 0 {
+		return 0, fmt.Errorf("unsupported bit depth: %d", d.bits)
+	}
+	// Whole frames only, and never past the data chunk (trailing chunks such
+	// as LIST/id3 metadata are not audio).
+	frameBytes := bytesPerSample * d.channels
+	bytesNeeded := len(buf) / d.channels * frameBytes
+	pos, err := d.file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return 0, err
+	}
+	if left := d.dataEnd - pos; int64(bytesNeeded) > left {
+		bytesNeeded = int(left / int64(frameBytes) * int64(frameBytes))
+	}
+	if bytesNeeded <= 0 {
+		return 0, io.EOF
+	}
 	if bytesNeeded > len(d.buffer) {
 		d.buffer = make([]byte, bytesNeeded)
 	}
 
-	n, err := d.file.Read(d.buffer[:bytesNeeded])
+	n, err := io.ReadFull(d.file, d.buffer[:bytesNeeded])
+	if err == io.ErrUnexpectedEOF {
+		err = io.EOF
+	}
 	if err != nil && err != io.EOF {
 		return 0, err
 	}
+	n -= n % frameBytes
 
 	if n == 0 {
 		return 0, err

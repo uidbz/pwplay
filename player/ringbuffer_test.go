@@ -143,13 +143,13 @@ func TestRingBufferWrap(t *testing.T) {
 func TestRingBufferFull(t *testing.T) {
 	rb := NewRingBuffer(5)
 
-	// Try to overfill (remember: 1 slot always kept empty)
+	// Try to overfill. The monotonic read/write counters distinguish full
+	// from empty, so the whole capacity is usable.
 	samples := make([]float32, 10)
 	written := rb.Write(samples)
 
-	// Should only write size-1 samples
-	if written >= 5 {
-		t.Errorf("Buffer should not accept all samples, wrote %d", written)
+	if written != 5 {
+		t.Errorf("Write into empty size-5 buffer wrote %d, want 5", written)
 	}
 
 	// Verify buffer is now effectively full

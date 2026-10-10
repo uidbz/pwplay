@@ -93,18 +93,20 @@ Gapless transitions work across all format combinations:
 FLAC → MP3 → WAV → OGG → OPUS (seamless)
 ```
 
-The next track is preloaded while the current one plays. All tracks in a
-playlist are converted to the output stream's channel count and sample
-format; the output sample rate and channel layout are determined by the
-first track.
+The next track is preloaded while the current one plays. Transitions are
+gapless between tracks of the same sample rate and channel count.
 
-## Session Format
+## Stream Format
 
-The PipeWire stream is opened with the **first track's** sample rate and
-channel count and stays fixed for the session. pwplay does not resample:
-tracks with a different sample rate play at the wrong speed, and tracks
-with a different channel count are misaligned. Keep a playlist's tracks at
-one sample rate / channel layout for correct playback.
+The output stream (PipeWire, or OpenSL ES on Android) always runs at the
+**current track's** native sample rate and channel count; pwplay itself
+never resamples (PipeWire converts to the device rate when needed, unless
+passthrough asks the device to follow the stream).
+
+When the next track has a different format, the player lets the previous
+track's buffered audio finish, then reopens the stream at the new format.
+That costs a short gap, but only at a format change (typically between
+albums). Jumping to a track (next/previous/goto) switches immediately.
 
 ## Adding a New Format
 
