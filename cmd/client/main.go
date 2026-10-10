@@ -172,7 +172,7 @@ func render(s *client.Status, msg string, showPlaylist bool, metadata *client.Me
 	pos := formatTime(s.Position)
 	dur := formatTime(s.TrackDuration)
 	bar := progressBar(s.Position, s.TrackDuration, 36)
-	vol := int(s.Volume*100 + 0.5)
+	vol := client.LevelPercent(s.Volume)
 	buf.WriteString(clearLine)
 	buf.WriteString(fmt.Sprintf("  %s %s[%s]%s %s  %svol %d%%%s\n",
 		pos, dim, bar, reset, dur, dim, vol, reset))
@@ -393,24 +393,18 @@ func main() {
 				if s != nil && s.Passthrough {
 					msg = "Volume disabled (passthrough)"
 				} else if s != nil {
-					newVol := s.Volume - 0.05
-					if newVol < 0 {
-						newVol = 0
-					}
+					newVol := client.StepGain(s.Volume, -0.05)
 					c.SetVolume(newVol)
-					msg = fmt.Sprintf("Volume %d%%", int(newVol*100+0.5))
+					msg = fmt.Sprintf("Volume %d%%", client.LevelPercent(newVol))
 				}
 			case 'V':
 				s, _ := c.Status()
 				if s != nil && s.Passthrough {
 					msg = "Volume disabled (passthrough)"
 				} else if s != nil {
-					newVol := s.Volume + 0.05
-					if newVol > 2 {
-						newVol = 2
-					}
+					newVol := client.StepGain(s.Volume, +0.05)
 					c.SetVolume(newVol)
-					msg = fmt.Sprintf("Volume %d%%", int(newVol*100+0.5))
+					msg = fmt.Sprintf("Volume %d%%", client.LevelPercent(newVol))
 				}
 			case 'm':
 				s, _ := c.Status()

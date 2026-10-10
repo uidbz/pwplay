@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/uidbz/pwplay/client"
 	"github.com/uidbz/pwplay/pipewire"
 	"github.com/uidbz/pwplay/player"
 )
@@ -123,19 +124,13 @@ func main() {
 			p.SeekRelative(-10)
 			log.Printf("Seek -10s -> %s", formatTime(p.Position()))
 		case "v":
-			v := p.Volume() - 0.05
-			if v < 0 {
-				v = 0
-			}
+			v := client.StepGain(p.Volume(), -0.05)
 			p.SetVolume(v)
-			log.Printf("Volume %d%%", int(v*100+0.5))
+			log.Printf("Volume %d%%", client.LevelPercent(v))
 		case "V":
-			v := p.Volume() + 0.05
-			if v > 2 {
-				v = 2
-			}
+			v := client.StepGain(p.Volume(), +0.05)
 			p.SetVolume(v)
-			log.Printf("Volume %d%%", int(v*100+0.5))
+			log.Printf("Volume %d%%", client.LevelPercent(v))
 		case "m":
 			if p.Volume() > 0 {
 				p.SetVolume(0)

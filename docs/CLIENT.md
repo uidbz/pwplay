@@ -88,7 +88,18 @@ func (c *Client) SeekRelative(offset float64) error
 func (c *Client) SetVolume(volume float64) error
 ```
 
-Sets volume from 0.0 (silent) to 2.0 (200%). Default is 1.0. Ignored in passthrough mode.
+Sets volume as a linear gain from 0.0 (silent) to 2.0. Default is 1.0
+(unity). Ignored in passthrough mode.
+
+Linear gain is not what a volume control should show — loudness is
+perceived logarithmically. Map user-facing levels with the cubic curve
+PipeWire/pavucontrol use:
+
+```go
+c.SetVolume(client.LevelToGain(0.5))          // "50 %" = gain 0.125
+pct := client.LevelPercent(s.Volume)          // gain -> displayed %
+c.SetVolume(client.StepGain(s.Volume, +0.05)) // 5 % louder
+```
 
 ### Playlist Management
 

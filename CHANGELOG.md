@@ -36,6 +36,15 @@ or duplicated.
   trailing metadata chunks (`LIST`, `id3`) played as noise
 - Duration is taken from the data chunk size
 
+### Perceptual volume levels in the clients
+- `client.LevelToGain` / `GainToLevel` / `StepGain` / `LevelPercent` map a
+  user-facing level (0…1) onto the server's linear gain with the cubic
+  curve PipeWire and pavucontrol use (gain = level³). A linear mapping made
+  low settings far too loud (20 % was -14 dB rather than -42 dB)
+- `pwplay-client` and `pwplay-player` show and step volume on that curve,
+  capped at 100 % (unity gain; boosting above it clips). The REST API is
+  unchanged (linear gain 0.0–2.0)
+
 ### Pluggable Audio Sinks (Android support)
 
 The `player` package's audio output is no longer hard-wired to PipeWire:
