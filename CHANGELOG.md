@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v0.3.0 - 2026-10-12
+
+First git tag, so Go modules can depend on a release. The version restarts at
+v0.x because the module path is `github.com/uidbz/pwplay` (Go only accepts
+v2+ tags on a `/v2` path); the v1.x/v2.x headings below are untagged history.
+
 ### Seeking a fully buffered last track no longer sticks at end-of-file
 
 A track that fits the ring buffer is decoded to its end at once, and on the
