@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Seeking a fully buffered last track no longer sticks at end-of-file
+
+A track that fits the ring buffer is decoded to its end at once, and on the
+last queue entry that stopped decoding while its tail was still playing. A
+seek then cleared the ring and rewound the decoder but left the stop in
+place, so playback sat silent at the seek target (and a later Play restarted
+the queue from the top). The decoder's end-of-queue stop is now told apart
+from a user Stop (`endStop`): a seek in that state resumes decoding, a seek
+after Stop still does not start playback. The play tracker likewise keeps
+the last track's play open until its buffered tail has actually drained,
+instead of ending it the moment the decoder reached EOF, and takes the
+recorded position from the same boundary snapshot as the heard time.
+
 ### Play tracking and a play log (`GET /history`)
 
 The engine now reports finished plays itself: `PlayerOptions.OnPlay`

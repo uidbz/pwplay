@@ -117,14 +117,19 @@ type Player struct {
 	stopped      int32
 	stopReset    int32
 	eof          int32
-	nextTrack    int32
-	prevTrack    int32
-	gotoTrack    int32 // atomic; -1 = no request, else the index to jump to
-	addTrack     chan string
-	removeTrack  chan int
-	clearTracks  chan struct{}
-	stopDecode   chan bool
-	decodeDone   chan bool
+	// endStop is 1 while stopped was set by the decoder running out of queue
+	// (not by Stop): the current decoder is still loaded at its end, and the
+	// ring may still be playing its tail. A seek in that state resumes
+	// decoding; a seek after a user Stop does not start playback.
+	endStop     int32
+	nextTrack   int32
+	prevTrack   int32
+	gotoTrack   int32 // atomic; -1 = no request, else the index to jump to
+	addTrack    chan string
+	removeTrack chan int
+	clearTracks chan struct{}
+	stopDecode  chan bool
+	decodeDone  chan bool
 	// sampleRate/channels are the open sink's format, int32 accessed
 	// atomically: written by the decoder thread whenever it (re)opens the sink
 	// (lazily on the first track load, and again at every format change) and
@@ -561,6 +566,14 @@ func (p *Player) decoderThread() {
 					pending = nil
 					p.ringBuffer.Clear()
 					p.resetBoundaries(int(atomic.LoadInt32(&p.currentTrack)), target, currentFile)
+					// The decoder had already read the last track to its end
+					// (a track that fits the ring is fully buffered at once),
+					// which stopped decoding. The rewound decoder has samples
+					// again: resume, or playback sits silent at the target.
+					if atomic.CompareAndSwapInt32(&p.endStop, 1, 0) {
+						atomic.StoreInt32(&p.eof, 0)
+						atomic.StoreInt32(&p.stopped, 0)
+					}
 				}
 			}
 			// Clear the seek request regardless of success
@@ -724,6 +737,7 @@ func (p *Player) decoderThread() {
 					// No further track: stop once the queued tail drains.
 					atomic.StoreInt32(&p.stopped, 1)
 					atomic.StoreInt32(&p.eof, 1)
+					atomic.StoreInt32(&p.endStop, 1)
 				}
 				time.Sleep(10 * time.Millisecond)
 				continue
@@ -855,6 +869,7 @@ func (p *Player) loadTrack(idx int) bool {
 	// track (sample rate or channel count; a mismatch would play at the wrong
 	// speed).
 	p.ringBuffer.Clear()
+	atomic.StoreInt32(&p.endStop, 0) // a fresh decoder, not one parked at its end
 	if want := formatOf(file); want != p.streamFormat() {
 		if err := p.switchSink(want); err != nil {
 			log.Printf("Failed to open audio output: %v", err)
@@ -918,6 +933,7 @@ func (p *Player) Play() {
 		}
 		p.mu.Unlock()
 	}
+	atomic.StoreInt32(&p.endStop, 0)
 	atomic.StoreInt32(&p.paused, 0)
 	atomic.StoreInt32(&p.stopped, 0)
 }
@@ -932,6 +948,7 @@ func (p *Player) Stop() {
 	// rewind (decoder seek + ring-buffer clear + position reset) is done by the
 	// decoder loop when it sees stopReset, keeping all buffer mutation on one
 	// goroutine.
+	atomic.StoreInt32(&p.endStop, 0)
 	atomic.StoreInt32(&p.stopped, 1)
 	atomic.StoreInt32(&p.stopReset, 1)
 }
@@ -1162,6 +1179,12 @@ func (p *Player) Position() float64 {
 	if !ok {
 		return 0
 	}
+	return b.position(consumed)
+}
+
+// position is the per-track position in seconds at read clock consumed, for
+// a boundary snapshot from activeBoundary.
+func (b trackBoundary) position(consumed uint64) float64 {
 	sampleRate, channels := b.rate, b.channels
 	if sampleRate <= 0 || channels <= 0 {
 		return 0

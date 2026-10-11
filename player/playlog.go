@@ -142,6 +142,17 @@ func (t *playTracker) accrue(upTo uint64) {
 	}
 }
 
+// playbackEnded reports whether nothing is audible any more. The decoder
+// sets stopped as soon as it has read the last track to its end, while the
+// ring still holds up to its full length of that track's tail: the play goes
+// on until the tail has drained (or a seek resumes decoding).
+func (p *Player) playbackEnded() bool {
+	if !p.IsStopped() {
+		return false
+	}
+	return atomic.LoadInt32(&p.endStop) == 0 || p.ringBuffer.Available() == 0
+}
+
 func (t *playTracker) sample() {
 	p := t.p
 	now := time.Now()
@@ -159,7 +170,7 @@ func (t *playTracker) sample() {
 		}
 		p.mu.RUnlock()
 	}
-	if !ok || url == "" || p.IsStopped() {
+	if !ok || url == "" || p.playbackEnded() {
 		t.accrue(consumed)
 		t.finish()
 		return
@@ -193,8 +204,10 @@ func (t *playTracker) sample() {
 		c.duration = float64(b.duration) / float64(b.rate)
 	}
 	t.accrue(consumed)
-	c.position = p.Position()
-	if p.IsEOF() && !p.IsPlaying() {
+	// From the same snapshot: a separate Position() call could already see
+	// the next track's boundary (a Goto landing between the two reads).
+	c.position = b.position(consumed)
+	if p.IsEOF() && p.playbackEnded() {
 		t.finish()
 	}
 }

@@ -23,7 +23,7 @@ func TestPlayTrackerRecordsHeardTime(t *testing.T) {
 	dir := t.TempDir()
 	const rate = 4000
 	a := writeWAV(t, dir, "a.wav", rate, 1, rate*12/10) // 1.2 s
-	b := writeWAV(t, dir, "b.wav", rate, 1, rate*8)     // 8 s: longer than the 3 s ring
+	b := writeWAV(t, dir, "b.wav", rate, 1, rate*5/2)   // 2.5 s: fully buffered before the seek
 
 	var mu sync.Mutex
 	var recs []PlayRecord
@@ -45,10 +45,10 @@ func TestPlayTrackerRecordsHeardTime(t *testing.T) {
 	// All of a (gapless into b), then 1.2 s of b with a forward seek in the
 	// middle: the skipped second must not count as heard.
 	pumpRealtime(sink, rate, 1.8)
-	p.Seek(4.0)
-	waitFor(t, 2*time.Second, "seek", func() bool { return p.Position() >= 3.99 })
-	time.Sleep(50 * time.Millisecond)
-	waitFor(t, 2*time.Second, "refill", func() bool { return p.ringBuffer.Available() > rate })
+	waitFor(t, 2*time.Second, "b decoded to its end", p.IsEOF)
+	p.Seek(1.5)
+	waitFor(t, 2*time.Second, "seek", func() bool { return p.Position() >= 1.49 })
+	waitFor(t, 2*time.Second, "refill", func() bool { return p.ringBuffer.Available() >= rate*9/10 })
 	pumpRealtime(sink, rate, 0.6)
 	p.Goto(0) // ends b's play
 	waitFor(t, 2*time.Second, "goto", func() bool { return p.CurrentTrack() == 0 })
@@ -64,7 +64,7 @@ func TestPlayTrackerRecordsHeardTime(t *testing.T) {
 		t.Errorf("a: %+v", recs[0])
 	}
 	// 0.6 s before the seek + 0.6 s after it.
-	if filepath.Base(recs[1].URL) != "b.wav" || math.Abs(recs[1].Listened-1.2) > 0.15 || recs[1].Position < 4.4 {
+	if filepath.Base(recs[1].URL) != "b.wav" || math.Abs(recs[1].Listened-1.2) > 0.15 || recs[1].Position < 2.0 {
 		t.Errorf("b: %+v", recs[1])
 	}
 }
