@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Play tracking and a play log (`GET /history`)
+
+The engine now reports finished plays itself: `PlayerOptions.OnPlay`
+receives a `PlayRecord` (entry, start time, seconds actually heard, track
+length, end position) whenever a play ends — the heard entry changes, it is
+restarted, playback stops, the queue ends or the player closes. Listened
+time is measured on the ring buffer's read clock (only audio that left for
+the device counts; seeks skip nothing forward, pauses add nothing; a read
+clock jump from a cleared ring is capped at wall time). `PlayLog` is a
+bounded, sequence-numbered JSON-lines log with a stable source identity;
+pwplay-server keeps one at `-history` (default
+`$XDG_STATE_HOME/pwplay/history.jsonl`, `off` = memory) and serves it as
+`GET /history?since=<seq>`; `client.History(since)` reads it
+(`ErrNoHistory` from older servers). tie-audio drains it into tie's play
+history, including plays made while tie-audio was closed.
+
 ### Per-track output format (no more wrong-speed playback)
 
 The output stream used to keep the first track's sample rate and channel

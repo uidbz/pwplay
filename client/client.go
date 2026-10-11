@@ -4,10 +4,12 @@ package client
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // Status represents the current state of the audio player.
@@ -213,3 +215,48 @@ func (c *Client) PlaylistMetadata() ([]*Metadata, error) {
 func (c *Client) CoverURL() string {
 	return c.baseURL + "/cover"
 }
+
+// PlayRecord is one finished play reported by the server's play log.
+type PlayRecord struct {
+	Seq       uint64    `json:"seq"`
+	URL       string    `json:"url"`
+	StartedAt time.Time `json:"startedAt"`
+	EndedAt   time.Time `json:"endedAt"`
+	Listened  float64   `json:"listened"` // seconds actually heard
+	Duration  float64   `json:"duration"` // track length, 0 = unknown
+	Position  float64   `json:"position"` // where playback left the track
+}
+
+// History is the server's play log since a sequence number.
+type History struct {
+	// Source identifies the log; sequence numbers are unique per source.
+	Source  string       `json:"source"`
+	LastSeq uint64       `json:"lastSeq"`
+	Records []PlayRecord `json:"records"`
+}
+
+// History returns the plays with sequence numbers above since (GET
+// /history). A server predating the play log answers 404, reported as
+// ErrNoHistory.
+func (c *Client) History(since uint64) (*History, error) {
+	resp, err := c.httpClient.Get(fmt.Sprintf("%s/history?since=%d", c.baseURL, since))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrNoHistory
+	}
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("history: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	var h History
+	if err := json.NewDecoder(resp.Body).Decode(&h); err != nil {
+		return nil, fmt.Errorf("history: %w", err)
+	}
+	return &h, nil
+}
+
+// ErrNoHistory reports a server without a play log.
+var ErrNoHistory = errors.New("pwplay server has no play log (GET /history)")

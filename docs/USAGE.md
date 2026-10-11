@@ -60,6 +60,7 @@ pwplay-server   # empty queue; add tracks via POST /add and control via HTTP
 | GET | `/metadata` | Metadata for current track |
 | GET | `/playlist-metadata` | Metadata for all tracks |
 | GET | `/cover` | Album cover image of current track |
+| GET | `/history?since=N` | Finished plays with sequence number > N (play log) |
 
 See [WEBSERVICE.md](WEBSERVICE.md) for the full request/response reference.
 

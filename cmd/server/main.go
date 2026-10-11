@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/uidbz/pwplay/pipewire"
 	"github.com/uidbz/pwplay/player"
@@ -18,6 +19,7 @@ var p *player.Player
 func main() {
 	passthrough := flag.Bool("passthrough", false, "Disable software volume, prevent resampling and channel remixing")
 	exclusive := flag.Bool("exclusive", false, "Request exclusive access to the audio device (use with -passthrough)")
+	historyPath := flag.String("history", defaultHistoryPath(), `Play log file served by GET /history ("off" = keep plays in memory only)`)
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] [file-or-directory] ...\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Supported formats: FLAC, MP3, WAV, OGG, OPUS\n")
@@ -47,12 +49,28 @@ func main() {
 	}
 	defer pipewire.Deinit()
 
+	logPath := *historyPath
+	if logPath == "off" {
+		logPath = ""
+	}
+	plays, err := player.OpenPlayLog(logPath, "pwplay", player.DefaultPlayLogSize)
+	if err != nil {
+		log.Fatalf("play log: %v", err)
+	}
+	if logPath != "" {
+		log.Printf("Play log: %s (source %s)", logPath, plays.Source())
+	}
+
 	opts := player.PlayerOptions{
 		StartPaused: true,
 		Passthrough: *passthrough,
 		Exclusive:   *exclusive,
+		OnPlay: func(r player.PlayRecord) {
+			if _, err := plays.Append(r); err != nil {
+				log.Printf("play log: %v", err)
+			}
+		},
 	}
-	var err error
 	p, err = player.NewPlayerWithOptions(files, opts)
 	if err != nil {
 		log.Fatal(err)
@@ -134,6 +152,29 @@ func main() {
 		} else {
 			http.Error(w, `requires "position" or "relative" field`, 400)
 		}
+	})
+
+	// GET /history?since=<seq>: finished plays newer than seq, oldest first.
+	// Consumers de-duplicate on (source, seq) and resume from lastSeq.
+	http.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
+		var since uint64
+		if v := r.URL.Query().Get("since"); v != "" {
+			n, err := strconv.ParseUint(v, 10, 64)
+			if err != nil {
+				http.Error(w, "bad since", 400)
+				return
+			}
+			since = n
+		}
+		records := plays.Since(since)
+		if records == nil {
+			records = []player.PlayRecord{}
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"source":  plays.Source(),
+			"lastSeq": plays.LastSeq(),
+			"records": records,
+		})
 	})
 
 	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
@@ -284,4 +325,16 @@ func main() {
 
 	log.Println("Server started on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+// defaultHistoryPath is $XDG_STATE_HOME/pwplay/history.jsonl
+// (~/.local/state/pwplay/history.jsonl), or "off" without a home directory.
+func defaultHistoryPath() string {
+	if d := os.Getenv("XDG_STATE_HOME"); d != "" {
+		return filepath.Join(d, "pwplay", "history.jsonl")
+	}
+	if h, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(h, ".local", "state", "pwplay", "history.jsonl")
+	}
+	return "off"
 }

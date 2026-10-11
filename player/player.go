@@ -163,6 +163,9 @@ type Player struct {
 	// Passthrough mode: exclusive device access, no PipeWire resampling/mixing,
 	// no software volume. Enables bit-perfect output.
 	passthrough bool
+
+	// tracker reports finished plays (nil without PlayerOptions.OnPlay).
+	tracker *playTracker
 }
 
 // trackBoundary marks where a track's audio begins within the ring buffer's
@@ -340,6 +343,14 @@ type PlayerOptions struct {
 	// default (PipeWire on Linux, OpenSL ES on Android). Used by tests
 	// to drive the player's audio callback without a sound device.
 	Sink SinkFactory
+	// OnPlay, when non-nil, receives every finished play (see PlayRecord):
+	// the entry heard, for how long, and where playback left it. It is
+	// called from the player's tracking goroutine — and once more from Close
+	// for the play still open — so it must not call back into the Player
+	// synchronously in a way that blocks on Close.
+	OnPlay func(PlayRecord)
+	// PlayTrackInterval is the tracker's sampling period (default 250 ms).
+	PlayTrackInterval time.Duration
 }
 
 func NewPlayer(files []string, startPaused bool) (*Player, error) {
@@ -399,6 +410,11 @@ func NewPlayerWithOptions(files []string, opts PlayerOptions) (*Player, error) {
 
 	if opts.StartPaused {
 		atomic.StoreInt32(&p.paused, 1)
+	}
+
+	if opts.OnPlay != nil {
+		p.tracker = newPlayTracker(p, opts.OnPlay, opts.PlayTrackInterval)
+		go p.tracker.run()
 	}
 
 	if firstFile == nil {
@@ -1200,6 +1216,9 @@ func (p *Player) PlaylistMetadata() []*TrackMetadata {
 }
 
 func (p *Player) Close() {
+	if p.tracker != nil {
+		p.tracker.close() // flushes the open play while state is still readable
+	}
 	close(p.stopDecode)
 	<-p.decodeDone
 

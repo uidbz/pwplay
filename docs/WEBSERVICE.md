@@ -230,6 +230,35 @@ Album cover image of the current track. The `Content-Type` header carries the im
 curl -OJ http://localhost:8080/cover
 ```
 
+### GET /history
+
+Finished plays recorded by the player (the engine's `PlayerOptions.OnPlay`
+hook): the entry heard, the seconds actually heard (`listened` — seeks skip
+nothing forward and replay nothing twice, pauses add nothing), the track
+length and where playback left it. Plays shorter than one second are not
+recorded. The log is persisted as JSON lines at `-history`
+(default `$XDG_STATE_HOME/pwplay/history.jsonl`; `-history off` keeps it in
+memory) and holds the last 10 000 plays.
+
+`since` returns only records with a larger sequence number. Sequence numbers
+are unique per `source` — an identity minted when the log file is created —
+so a consumer de-duplicates on (source, seq) and resumes from `lastSeq`.
+
+```bash
+curl 'http://localhost:8080/history?since=41'
+```
+
+```json
+{
+  "source": "pwplay@host/1a2b3c4d",
+  "lastSeq": 42,
+  "records": [
+    {"seq": 42, "url": "http://filehost/abc…", "startedAt": "2026-10-11T17:00:00Z",
+     "endedAt": "2026-10-11T17:04:10Z", "listened": 248.3, "duration": 250.1, "position": 250.1}
+  ]
+}
+```
+
 ## Build
 
 ```bash
