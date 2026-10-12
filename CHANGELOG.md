@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## v0.3.1 - 2026-10-12
+
+### Builds as a dependency again
+
+`pipewire` now passes explicit cgo flags instead of `#cgo pkg-config`.
+PipeWire's pkg-config output includes `-fno-strict-overflow`, which Go's cgo
+flag allowlist rejects for module-cache packages, so any module requiring
+pwplay (tie-gui) failed with "invalid flag in pkg-config --cflags". The flags
+are the standard include paths (`/usr/include/pipewire-0.3`,
+`/usr/include/spa-0.2`); set `CGO_CFLAGS` for another layout.
+
 ## v0.3.0 - 2026-10-12
 
 First git tag, so Go modules can depend on a release. The version restarts at

@@ -3,7 +3,13 @@
 package pipewire
 
 /*
-#cgo pkg-config: libpipewire-0.3
+// Explicit flags instead of `#cgo pkg-config: libpipewire-0.3`: PipeWire's
+// .pc file emits -fno-strict-overflow, which Go's cgo flag allowlist rejects
+// for packages built from the module cache ("invalid flag in pkg-config
+// --cflags"), so every module depending on pwplay failed to build. These are
+// the standard include paths; set CGO_CFLAGS for an unusual layout.
+#cgo CFLAGS: -I/usr/include/pipewire-0.3 -I/usr/include/spa-0.2 -D_REENTRANT
+#cgo LDFLAGS: -lpipewire-0.3
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
 #include <spa/param/props.h>
